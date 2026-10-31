@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { API_VERSION, CAPABILITY, type ServerInfo, type ProjectContext, type SavedChange, type ChangeInput } from '../contracts/index.js';
-import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type AdapterChangeCheck, type ChangeConflict, type SourcePathName, type ExampleKey } from '../contracts/adapters.js';
+import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, WORKSPACE_CAPABILITY, type ProjectCreateInput, type ProjectUpdateInput, type AssetUploadInput, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type AdapterChangeCheck, type ChangeConflict, type SourcePathName, type ExampleKey } from '../contracts/adapters.js';
 import type { BuildInfo } from '../contracts/runner.js';
 import { ACCESS_CAPABILITY, type AuthUser, type ProjectAccess } from '../contracts/access.js';
 
@@ -32,24 +32,26 @@ export async function privateJson(file: string): Promise<unknown> {
   } catch { throw new ConnectionError('CREDENTIALS', 'Не удалось прочитать приватный файл подключения (требуются права 0600).'); }
 }
 const id = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-const sourcePath = (value: unknown): value is SourcePathName => value === 'index.html' || value === 'main.tsx' || value === 'style.css';
+const sourcePath = (value: unknown): value is SourcePathName => typeof value === 'string' && value.length > 0 && value.length <= 240
+  && !/[\x00-\x20\\:?#%]/.test(value) && !value.startsWith('/')
+  && value.split('/').every(part => !!part && !part.startsWith('.') && !['node_modules', '__proto__', 'prototype', 'constructor'].includes(part));
 const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 function conflictsOf(value: unknown): ChangeConflict[] {
   if (!Array.isArray(value)) return [];
   const result: ChangeConflict[] = [];
-  for (const item of value.slice(0, 3)) {
-    if (!item || typeof item !== 'object' || !sourcePath(item.path) || !hash(item.baseHash) || !hash(item.currentHash)) continue;
+  for (const item of value.slice(0, 128)) {
+    if (!item || typeof item !== 'object' || !sourcePath(item.path) || !(item.baseHash === null || hash(item.baseHash)) || !(item.currentHash === null || hash(item.currentHash))) continue;
     if (item.code === 'FILE_CHANGED') result.push({ path: item.path, code: item.code, baseHash: item.baseHash, currentHash: item.currentHash });
-    else if (item.code === 'BASE_HASH_MISMATCH' && hash(item.expectedHash))
+    else if (item.code === 'BASE_HASH_MISMATCH' && (item.expectedHash === null || hash(item.expectedHash)))
       result.push({ path: item.path, code: item.code, baseHash: item.baseHash, currentHash: item.currentHash, expectedHash: item.expectedHash });
   }
   return result;
 }
-export async function request<T>(origin: string, path: string, token?: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+export async function request<T>(origin: string, path: string, token?: string, body?: unknown, signal?: AbortSignal, method?: 'POST' | 'PATCH'): Promise<T> {
   signal?.throwIfAborted();
   try {
     const response = await fetch(origin + path, {
-      method: body === undefined ? 'GET' : 'POST', redirect: 'error',
+      method: method ?? (body === undefined ? 'GET' : 'POST'), redirect: 'error',
       headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]),
@@ -57,7 +59,7 @@ export async function request<T>(origin: string, path: string, token?: string, b
     const data = await response.json() as any;
     if (!response.ok) {
       if (path.startsWith('/api/v1/adapters/') && ((response.status === 409 && data?.error?.code === 'CHANGE_CONFLICT')
-        || (response.status === 400 && data?.error?.code === 'RESOURCE_CONFLICT'))) {
+        || ([400, 409].includes(response.status) && data?.error?.code === 'RESOURCE_CONFLICT'))) {
         const error = data.error;
         throw new ConnectionError(error.code, error.code === 'CHANGE_CONFLICT'
           ? 'Изменяемый файл изменился после чтения. Ничего не сохранено: перечитайте проект и переоцените правку, не подменяйте базу или хеши для повтора.'
@@ -99,6 +101,8 @@ export async function serverInfo(origin: string, signal?: AbortSignal): Promise<
     throw new ConnectionError('INCOMPATIBLE', 'Установка не поддерживает API этого прототипа.');
   if (!info.capabilities.includes(ACCESS_CAPABILITY))
     throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает права проектов. Требуется access.project-roles.v1; обновите сервер до прототипа 6.');
+  if (!info.capabilities.includes(WORKSPACE_CAPABILITY))
+    throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает собственные проекты. Требуется workspace.projects.v1; обновите сервер до этапа 1.');
   return info;
 }
 export async function currentUser(origin: string, token: string, signal?: AbortSignal): Promise<AuthUser> {
@@ -146,44 +150,74 @@ export class Connection {
       }
     }
   }
-  async adapterExamples(signal?: AbortSignal): Promise<{ examples: (AdapterExample & { access: ProjectAccess })[]; canCreateExamples: boolean }> {
-    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
+  async adapterExamples(signal?: AbortSignal): Promise<{ projects: { id: string; name: string; description: string; access: ProjectAccess }[]; templates: AdapterExample[]; canCreate: boolean }> {
+    const { token } = await this.credentials(signal, WORKSPACE_CAPABILITY);
     const user = await currentUser(this.origin, token, signal);
-    if (user.isOwner) {
-      const result = await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal);
-      if (!Array.isArray(result.examples) || result.examples.some(example => !validExample(example)))
-        throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый список примеров.');
-      return { examples: result.examples.map(example => ({ ...example, access: { role: 'owner', canEdit: true, canManage: true, canUseAgent: true } })), canCreateExamples: true };
-    }
-    const result = await request<{ projects: (AdapterExample & { access: ProjectAccess })[] }>(this.origin, '/api/v1/adapters/projects', token, undefined, signal);
-    if (!Array.isArray(result.projects) || result.projects.some(example => !validExample(example) || !validAccess(example.access)))
-      throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый список примеров.');
-    return { examples: result.projects, canCreateExamples: false };
+    const result = await request<{ projects: { id: string; name: string; description: string; access: ProjectAccess }[] }>(this.origin, '/api/v1/adapters/projects', token, undefined, signal);
+    if (!Array.isArray(result.projects) || result.projects.some(project => !validProject(project) || !validAccess(project.access)))
+      throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый список проектов.');
+    const templates = user.isOwner ? await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal) : { examples: [] };
+    return { projects: result.projects, templates: templates.examples, canCreate: user.isOwner };
   }
-  async adapterProject(projectId: ExampleKey, open: boolean, targetId?: string, signal?: AbortSignal): Promise<AdapterProjectContext> {
-    if (!exampleKey(projectId) || (targetId !== undefined && (!targetId || targetId.length > 256)))
-      throw new ConnectionError('INVALID_REQUEST', 'Нужен существующий пример и допустимый идентификатор цели.');
-    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
-    // Opening a shared project is always a read; guests never seed templates.
-    const create = open && (await currentUser(this.origin, token, signal)).isOwner;
-    const path = create ? '/api/v1/adapters/examples/' + projectId
-      : '/api/v1/adapters/projects/' + projectId + (targetId ? '?targetId=' + encodeURIComponent(targetId) : '');
-    const result = await request<AdapterProjectContext>(this.origin, path, token, create ? {} : undefined, signal);
-    if (result.projectId !== projectId || !id(result.revisionId) || result.saved !== true || !Array.isArray(result.files)
-      || !Array.isArray(result.analysis?.targets) || !Array.isArray(result.instructions) || !validAccess(result.access))
-      throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый контекст адаптеров.');
-    return result;
+  async adapterProject(projectId: ExampleKey, _open: boolean, targetId?: string, signal?: AbortSignal): Promise<AdapterProjectContext & { studioUrl: string }> {
+    if (!projectKey(projectId) || (targetId !== undefined && (!targetId || targetId.length > 256)))
+      throw new ConnectionError('INVALID_REQUEST', 'Нужен существующий проект и допустимый идентификатор цели.');
+    const { token } = await this.credentials(signal, WORKSPACE_CAPABILITY);
+    const path = '/api/v1/adapters/projects/' + projectId + (targetId ? '?targetId=' + encodeURIComponent(targetId) : '');
+    const result = await request<AdapterProjectContext>(this.origin, path, token, undefined, signal);
+    if (!validContext(result) || result.projectId !== projectId)
+      throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый контекст проекта.');
+    return { ...result, studioUrl: this.origin + '/?project=' + encodeURIComponent(projectId) };
+  }
+  async createProject(input: Omit<ProjectCreateInput, 'operationId'> & { operationId?: string }, signal?: AbortSignal) {
+    const operationId = input.operationId ?? randomUUID();
+    return this.workspaceMutation(operationId, undefined, signal, async token => {
+      if (!id(operationId) || !input.name.trim() || input.name.length > 120) throw new ConnectionError('INVALID_REQUEST', 'Нужно имя проекта длиной до 120 символов и UUID операции.');
+      const result = await request<AdapterProjectContext>(this.origin, '/api/v1/adapters/projects', token, { ...input, operationId }, signal);
+      if (!validContext(result)) throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил создание проекта.');
+      return { ...result, operationId, studioUrl: this.origin + '/?project=' + encodeURIComponent(result.projectId) };
+    });
+  }
+  async updateProject(projectId: string, input: Omit<ProjectUpdateInput, 'operationId'> & { operationId?: string }, signal?: AbortSignal) {
+    const operationId = input.operationId ?? randomUUID();
+    return this.workspaceMutation(operationId, input.baseRevisionId, signal, async token => {
+      if (!projectKey(projectId) || !id(input.baseRevisionId) || !id(operationId)) throw new ConnectionError('INVALID_REQUEST', 'Нужны проект и UUID базовой ревизии/операции.');
+      const result = await request<AdapterSavedChange>(this.origin, '/api/v1/adapters/projects/' + projectId, token, { ...input, operationId }, signal, 'PATCH');
+      if (!validSaved(result, projectId, operationId)) throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил сохранение настроек проекта.');
+      return savedResult(result);
+    });
+  }
+  async asset(projectId: string, input: Omit<AssetUploadInput, 'operationId'> & { operationId?: string }, signal?: AbortSignal) {
+    const operationId = input.operationId ?? randomUUID();
+    return this.workspaceMutation(operationId, input.baseRevisionId, signal, async token => {
+      if (!projectKey(projectId) || !id(input.baseRevisionId) || !id(operationId) || !sourcePath(input.path)
+        || !(input.expectedHash === null || hash(input.expectedHash)) || (input.contentBase64 !== null && input.contentBase64.length > 11184812))
+        throw new ConnectionError('INVALID_REQUEST', 'Нужны проект, базовая ревизия, относительный путь и SHA-256 ресурса; новый ресурс использует expectedHash:null.');
+      const result = await request<AdapterSavedChange>(this.origin, '/api/v1/adapters/projects/' + projectId + '/assets', token, { ...input, operationId }, signal);
+      if (!validSaved(result, projectId, operationId)) throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил сохранение ресурса.');
+      return savedResult(result);
+    });
+  }
+  private async workspaceMutation<T>(operationId: string, baseRevisionId: string | undefined, signal: AbortSignal | undefined, action: (token: string) => Promise<T>): Promise<T> {
+    try {
+      const { token } = await this.credentials(signal, WORKSPACE_CAPABILITY);
+      return await action(token);
+    } catch (error) {
+      if (error instanceof ConnectionError) throw new ConnectionError(error.code, error.message, error.revisionId, operationId,
+        { ...error.details, ...(baseRevisionId ? { baseRevisionId } : {}) });
+      throw new ConnectionError('UNCONFIRMED', 'Результат не подтверждён. Сохраните operationId и исходные параметры для повторного запроса.', undefined, operationId, { baseRevisionId });
+    }
   }
   async adapterChange(projectId: ExampleKey, baseRevisionId: string, operation: AdapterChangeInput['operation'], signal?: AbortSignal,
     options: AdapterChangeOptions = {}): Promise<AdapterSavedChange | AdapterChangeCheck> {
     const operationId = options.operationId ?? randomUUID(), action = options.action ?? 'apply';
     try {
-      if (!exampleKey(projectId) || !id(baseRevisionId) || !id(operationId) || !['check', 'apply'].includes(action))
+      if (!projectKey(projectId) || !id(baseRevisionId) || !id(operationId) || !['check', 'apply'].includes(action))
         throw new ConnectionError('INVALID_REQUEST', 'Нужны существующий проект, UUID прочитанной ревизии/операции и действие check или apply.');
-      if (operation.type === 'files' && (operation.files.length < 1 || operation.files.length > 3
+      if (operation.type === 'files' && (operation.files.length < 1 || operation.files.length > 128
         || new Set(operation.files.map(file => file.path)).size !== operation.files.length
-        || operation.files.some(file => !hash(file.expectedHash) || file.content.length > 262144)))
-        throw new ConnectionError('INVALID_REQUEST', 'Передайте от одного до трёх разных файлов с прочитанными SHA-256; максимум 262144 символа на файл.');
+        || operation.files.some(file => !sourcePath(file.path) || !(file.expectedHash === null || hash(file.expectedHash)) || (file.content !== null && file.content.length > 262144))))
+        throw new ConnectionError('INVALID_REQUEST', 'Передайте от 1 до 128 разных файлов с прочитанными SHA-256; для нового файла hash:null, для удаления content:null; максимум 262144 символа на файл.');
       if (operation.type === 'semantic' && ((!operation.targetId || operation.targetId.length > 256)
         || (!operation.adapterId || operation.adapterId.length > 100) || (!operation.property || operation.property.length > 100)
         || (typeof operation.value === 'string' ? [...operation.value].length > 4096 : !Number.isFinite(operation.value))))
@@ -214,7 +248,7 @@ export class Connection {
     }
   }
   async adapterBuild(projectId: ExampleKey, revisionId: string, signal?: AbortSignal): Promise<{ id: string }> {
-    if (!exampleKey(projectId) || !id(revisionId)) throw new ConnectionError('INVALID_REQUEST', 'Нужны проект и UUID сохранённой ревизии.');
+    if (!projectKey(projectId) || !id(revisionId)) throw new ConnectionError('INVALID_REQUEST', 'Нужны проект и UUID сохранённой ревизии.');
     const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
     const result = await request<{ id: string }>(this.origin, '/api/v1/adapters/projects/' + projectId + '/builds', token, { revisionId }, signal);
     if (!id(result.id)) throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил постановку сборки в очередь.');
@@ -229,9 +263,9 @@ export class Connection {
     return result;
   }
 }
-function exampleKey(value: unknown): value is ExampleKey { return ['editorial', 'dashboard', 'scene'].includes(value as string); }
-function validExample(value: any): value is AdapterExample {
-  return value && exampleKey(value.id) && typeof value.name === 'string' && typeof value.description === 'string';
+function projectKey(value: unknown): value is ExampleKey { return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(value); }
+function validProject(value: any): boolean {
+  return value && projectKey(value.id) && typeof value.name === 'string' && typeof value.description === 'string';
 }
 function validAccess(value: any): value is ProjectAccess {
   return value && ['owner', 'viewer', 'editor'].includes(value.role)
@@ -254,10 +288,18 @@ function savedResult(value: AdapterSavedChange): AdapterSavedChange {
 function validCheck(value: any, projectId: ExampleKey, input: AdapterChangeInput): value is AdapterChangeCheck {
   if (!value || value.projectId !== projectId || value.operationId !== input.operationId || value.baseRevisionId !== input.baseRevisionId
     || !id(value.currentRevisionId) || typeof value.rebased !== 'boolean' || !['ready', 'conflict', 'already-applied'].includes(value.status)
-    || !Array.isArray(value.touchedFiles) || value.touchedFiles.length > 3 || !value.touchedFiles.every(sourcePath)
-    || !Array.isArray(value.conflicts) || value.conflicts.length > 3 || conflictsOf(value.conflicts).length !== value.conflicts.length) return false;
+    || !Array.isArray(value.touchedFiles) || value.touchedFiles.length > 128 || !value.touchedFiles.every(sourcePath)
+    || !Array.isArray(value.conflicts) || value.conflicts.length > 128 || conflictsOf(value.conflicts).length !== value.conflicts.length) return false;
   if (value.status === 'already-applied') return validSaved(value.savedResult, projectId, input.operationId)
     && (value.savedResult.baseRevisionId === undefined || value.savedResult.baseRevisionId === input.baseRevisionId);
   return value.savedResult === undefined && (value.status === 'ready' ? value.conflicts.length === 0
     : value.conflicts.length > 0 && value.conflicts.every((item: ChangeConflict) => item.code === 'FILE_CHANGED'));
+}
+
+function validContext(value: any): value is AdapterProjectContext {
+  return value && projectKey(value.projectId) && id(value.revisionId) && value.saved === true
+    && typeof value.name === 'string' && sourcePath(value.entrypoint) && Array.isArray(value.assets)
+    && Array.isArray(value.files) && value.files.length <= 128
+    && value.files.every((file: any) => sourcePath(file.path) && hash(file.sha256) && typeof file.content === 'string')
+    && Array.isArray(value.analysis?.targets) && Array.isArray(value.instructions) && validAccess(value.access);
 }

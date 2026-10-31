@@ -1,11 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 
 export const RUNNER_CAPABILITY = 'runner.react-scene';
-export const SceneFiles = Type.Object({
-  'index.html': Type.String({ minLength: 1, maxLength: 262144 }),
-  'main.tsx': Type.String({ minLength: 1, maxLength: 262144 }),
-  'style.css': Type.String({ maxLength: 262144 }),
-}, { additionalProperties: false });
+export const SceneFiles = Type.Record(Type.String({ minLength: 1, maxLength: 240 }), Type.String({ maxLength: 262144 }), { maxProperties: 128 });
 export type SceneSource = Static<typeof SceneFiles>;
 export const SnapshotRequest = Type.Object({ files: SceneFiles }, { additionalProperties: false });
 export const BuildRequest = Type.Object({ snapshotId: Type.String({ format: 'uuid' }) }, { additionalProperties: false });

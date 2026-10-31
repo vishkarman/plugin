@@ -17,4 +17,4 @@ export const GuestCreate = Type.Object({ username: Type.String({minLength: 1,max
 export interface ProjectMember { userId: string; username: string; role: 'viewer' | 'editor'; allowAgent: boolean }
 export interface ProjectInvitation { id: string; role: 'viewer' | 'editor'; allowAgent: boolean; expiresAt: string; maxUses: number; uses: number; revokedAt: string | null }
 
-export interface ProjectSummary { id: 'editorial'|'dashboard'|'scene'; name: string; description: string; access: ProjectAccess }
+export interface ProjectSummary { id: string; name: string; description: string; access: ProjectAccess }

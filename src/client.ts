@@ -1,29 +1,94 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-ui-commands/client';
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
+import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client';
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client';
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-browser/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
-import { studioRemote } from './remote.js';
+import { createElement as h, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { studioRemote, type StudioConnection } from './remote.js';
+import { DesktopStudio, desktopBrowser } from './studio-view.js';
 
-export const inject = ['remote', 'commandUi', 'sidebarRight', 'sidebarRightTabs'];
+const panelId = 'vishvakarma' as MainPanelId;
+export const inject = ['remote', 'commandUi', 'layout', 'slots'];
 export async function apply(ctx: Context) {
   await ctx.remote.$mount(studioRemote);
-  ctx.inject(['remote.vishvakarma'], child => registerCommand(child));
+  ctx.inject(['remote.vishvakarma'], child => registerWorkspace(child));
 }
-function registerCommand(ctx: Context) {
+function registerWorkspace(ctx: Context) {
+  const getConnection = async () => {
+    const result = await ctx.remote.vishvakarma.studio();
+    if (!result.ok) throw new Error('Не удалось получить подключение Vishvakarma от DSH Host.');
+    if (!result.value.available) throw new Error(result.value.message);
+    return result.value;
+  };
+  // The global slot keeps the Studio guest mounted while DSH changes the central panel.
+  // Only its public main-slot anchor controls geometry; no DSH DOM is inspected.
+  let surface: { visible: boolean; left: number; top: number; width: number; height: number } = { visible: false, left: 0, top: 0, width: 0, height: 0 };
+  const listeners = new Set<() => void>();
+  const publish = (next: typeof surface) => { surface = next; for (const listener of listeners) listener(); };
+  const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+  ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: panelId }, Anchor));
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: panelId, order: 0 }, Studio));
+  function Anchor() {
+    const ref = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+      const element = ref.current!;
+      const measure = () => { const rect = element.getBoundingClientRect(); publish({ visible: true, left: rect.left, top: rect.top, width: rect.width, height: rect.height }); };
+      const observer = new ResizeObserver(measure);
+      observer.observe(element); window.addEventListener('resize', measure); window.addEventListener('scroll', measure, true); measure();
+      return () => { observer.disconnect(); window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure, true); publish({ ...surface, visible: false }); };
+    }, []);
+    return h('div', { ref, style: { width: '100%', height: '100%', minHeight: 0 }, 'aria-hidden': true });
+  }
+  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+    name: 'sidebar.panellist', id: panelId, label: () => 'Vishvakarma', order: 250,
+  }, ({ size }) => h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true },
+    h('path', { d: 'M4 5h16v14H4zM8 9l4 7 4-7M4 5l4-3h12v3', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round' }))));
   ctx.commandUi.register({
-    name: 'vishvakarma', label: () => 'Открыть Vishvakarma', description: () => 'Studio локального дизайн-проекта',
-    available: () => true,
-    ui: { kind: 'action', run: () => { void openStudio(); } },
+    name: 'vishvakarma', label: () => 'Открыть Vishvakarma', description: () => 'Рабочая область дизайн-проектов',
+    available: () => true, ui: { kind: 'action', run: () => { ctx.layout.selectPanel(panelId); } },
   });
-  async function openStudio() {
-    try {
-      const result = await ctx.remote.vishvakarma.studio();
-      if (!result.ok) throw new Error('Не удалось получить подключение Vishvakarma от DSH Host.');
-      if (!result.value.available) throw new Error(result.value.message);
-      if (!ctx.sidebarRightTabs.get('browser')) throw new Error('Панель Browser недоступна. Включите Browser-пакет DSH.');
-      // The public controller resolves the registered Browser tab type.
-      ctx.sidebarRight.openTab('browser', { params: { url: result.value.url } });
-    } catch (error) { window.alert(error instanceof Error ? error.message : 'Панель Browser недоступна. Включите Browser-пакет DSH.'); }
+  function Studio() {
+    const bounds = useSyncExternalStore(subscribe, () => surface);
+    const [opened, setOpened] = useState(false);
+    useEffect(() => { if (bounds.visible) setOpened(true); }, [bounds.visible]);
+    const [connection, setConnection] = useState<StudioConnection | null>(null);
+    const [error, setError] = useState(''), [actionError, setActionError] = useState('');
+    const [attempt, setAttempt] = useState(0);
+    useEffect(() => {
+      if (!opened) return;
+      let active = true;
+      void getConnection().then(value => { if (active) { setConnection(value); setError(''); } }, reason => {
+        if (active) setError(reason instanceof Error ? reason.message : 'Studio недоступна.');
+      });
+      return () => { active = false; };
+    }, [attempt, opened]);
+    function besideChat() {
+      if (!connection) return;
+      const sidebar = ctx.get('sidebarRight'), tabs = ctx.get('sidebarRightTabs');
+      if (!sidebar || !tabs?.get('browser')) { setActionError('Включите Browser-пакет DSH, чтобы открыть Studio рядом с чатом.'); return; }
+      setActionError('');
+      sidebar.openTab('browser', { params: { url: connection.url } });
+      ctx.layout.selectPanel(null);
+    }
+    const sameSite = connection && new URL(connection.url).hostname === window.location.hostname;
+    const desktop = desktopBrowser();
+    return h('section', { style: { position: 'fixed', left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, pointerEvents: 'auto', minHeight: 0, display: bounds.visible ? 'flex' : 'none', flexDirection: 'column', background: 'var(--dsw-alias-bg-base, #faf9f6)' } },
+      h('header', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid #8883' } },
+        h('strong', null, 'Vishvakarma'),
+        h('span', { style: { flex: 1 } }),
+        h('button', { type: 'button', onClick: besideChat, disabled: !connection }, 'Рядом с чатом'),
+        h('button', { type: 'button', onClick: () => ctx.layout.selectPanel(null) }, 'К чату')),
+      actionError ? h('p', { role: 'alert', style: { margin: 0, padding: '8px 16px' } }, actionError) : null,
+      error ? h('div', { role: 'alert', style: { padding: 24 } }, h('p', null, error),
+        h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить'))
+      : !connection ? h('p', { style: { padding: 24 } }, 'Подключаем Studio…')
+      : desktop ? h(DesktopStudio, { url: connection.url, bridge: desktop })
+      : !sameSite ? h('div', { style: { padding: 24 } },
+        h('p', null, 'Адрес Studio и DSH используют разные локальные имена. Для браузерной сессии откройте Studio рядом с чатом либо настройте одинаковое имя (например, 127.0.0.1).'),
+        h('button', { type: 'button', onClick: besideChat }, 'Открыть рядом с чатом'))
+      : h('iframe', { title: 'Vishvakarma Studio', src: connection.url, style: { width: '100%', flex: 1, minHeight: 0, border: 0 }, allow: 'clipboard-write' }));
   }
 }
