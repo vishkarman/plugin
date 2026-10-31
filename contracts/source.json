@@ -1,6 +1,6 @@
 {
   "apiVersion": "v1-prototype-1",
-  "serverVersion": "0.7.0-stage.1",
+  "serverVersion": "0.8.0-stage.2",
   "files": {
     "index.ts": {
       "source": "@vishkarman/server/contracts/index.ts",
@@ -16,7 +16,11 @@
     },
     "access.ts": {
       "source": "@vishkarman/server/contracts/access.ts",
-      "sha256": "0f0a47580a80490497875b19c3aaf97d4ac25bd14b10bccba71a1ebdac4768ab"
+      "sha256": "ef2daa491d09eac91df5345bf52034b84d11ecf67ac0c9368befd370614691c7"
+    },
+    "product.ts": {
+      "source": "@vishkarman/server/contracts/product.ts",
+      "sha256": "cbba457414cebd955abdc2a0dca13906526cef95a98ab59e8517a25ec2b11f80"
     }
   }
 }

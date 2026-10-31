@@ -1,3 +1,4 @@
+import { registerProductTools } from './product-tools.js';
 import { type Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
 import { defineTool } from '@deepseek-ai/dsh-tools';
@@ -46,6 +47,7 @@ export function apply(ctx: Context, config: ConnectionConfig) {
     execute: async (args, exec) => run(() => connection.change(args.baseRevisionId, args.text, exec.signal)),
   }));
   registerAdapterTools(ctx, connection);
+  registerProductTools(ctx, connection);
   const skillDir = fileURLToPath(new URL('../skills/vishvakarma/', import.meta.url));
   const skillPath = skillDir + 'SKILL.md';
   ctx.skills.registerProvider(() => ({

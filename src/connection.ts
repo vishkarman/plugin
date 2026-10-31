@@ -1,3 +1,4 @@
+import { PRODUCT_CAPABILITY, type HistoryResult,type RevisionContext,type ExportInfo } from '../contracts/product.js';
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
@@ -71,7 +72,7 @@ export async function request<T>(origin: string, path: string, token?: string, b
       }
       if (response.status === 403 && ['READ_ONLY', 'AGENT_FORBIDDEN'].includes(data?.error?.code)) {
         throw new ConnectionError(data.error.code, data.error.code === 'READ_ONLY'
-          ? 'У вас роль Viewer: проект доступен только для чтения. Ничего не сохранено; не повторяйте запись и не обходите права другим инструментом.'
+          ? 'У вас нет права изменять исходники: для агента проект доступен только для чтения. Ничего не сохранено; не повторяйте запись и не обходите права другим инструментом.'
           : 'Владелец не разрешил агенту изменять этот проект. Ничего не сохранено; не повторяйте запись. Для работы через DSH нужен Editor с разрешением агента.');
       }
       if (response.status === 404 && data?.error?.code === 'PROJECT_NOT_FOUND')
@@ -103,6 +104,7 @@ export async function serverInfo(origin: string, signal?: AbortSignal): Promise<
     throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает права проектов. Требуется access.project-roles.v1; обновите сервер до прототипа 6.');
   if (!info.capabilities.includes(WORKSPACE_CAPABILITY))
     throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает собственные проекты. Требуется workspace.projects.v1; обновите сервер до этапа 1.');
+  if (!info.capabilities.includes(PRODUCT_CAPABILITY)) throw new ConnectionError('INCOMPATIBLE','Для этой версии плагина нужен сервер этапа 2: product.history-comments-export.v1. Обновите сервер перед записью.');
   return info;
 }
 export async function currentUser(origin: string, token: string, signal?: AbortSignal): Promise<AuthUser> {
@@ -254,6 +256,47 @@ export class Connection {
     if (!id(result.id)) throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил постановку сборки в очередь.');
     return result;
   }
+  async comments(projectId:string,cursor?:string,signal?:AbortSignal) {
+    if(!projectKey(projectId)||(cursor!==undefined&&!id(cursor)))throw new ConnectionError('INVALID_REQUEST','Нужны проект и UUID курсора.');
+    const {token}=await this.credentials(signal,PRODUCT_CAPABILITY);
+    return request(this.origin,'/api/v1/adapters/projects/'+projectId+'/comments'+(cursor?'?cursor='+cursor:''),token,undefined,signal);
+  }
+  async history(input: {action:'list';projectId:string;cursor?:string}|{action:'read';projectId:string;revisionId:string}|{action:'label';projectId:string;revisionId:string;label:string;operationId?:string}|{action:'restore';projectId:string;revisionId:string;baseRevisionId:string;operationId?:string},signal?:AbortSignal) {
+    const operationId='operationId' in input?input.operationId??randomUUID():randomUUID();
+    return this.workspaceMutation(operationId,'baseRevisionId' in input?input.baseRevisionId:undefined,signal,async token=>{
+      if(!projectKey(input.projectId)||!id(operationId)||('revisionId' in input&&!id(input.revisionId))||('baseRevisionId' in input&&!id(input.baseRevisionId))||('cursor' in input&&input.cursor!==undefined&&!id(input.cursor)))throw new ConnectionError('INVALID_REQUEST','Нужны id проекта и UUID версий/операции.');
+      const base='/api/v1/adapters/projects/'+input.projectId;
+      if(input.action==='list'){
+        const result=await request<HistoryResult>(this.origin,base+'/history'+(input.cursor?'?cursor='+input.cursor:''),token,undefined,signal);
+        if(!id(result.currentRevisionId)||!Array.isArray(result.revisions)||result.revisions.some(row=>!id(row.id))||!(result.nextCursor===null||id(result.nextCursor)))throw new ConnectionError('INCOMPATIBLE','Неподдерживаемая история.');return result;
+      }
+      if(input.action==='read'){
+        const result=await request<RevisionContext>(this.origin,base+'/history/'+input.revisionId,token,undefined,signal);
+        if(!validContext(result)||result.projectId!==input.projectId||result.revisionId!==input.revisionId)throw new ConnectionError('INCOMPATIBLE','Неподдерживаемая версия.');return result;
+      }
+      if(input.action==='label'){
+        if(input.label.length>120)throw new ConnectionError('INVALID_REQUEST','Название — до 120 символов.');
+        const result=await request<{saved:boolean;revisionId:string;operationId:string;label:string}>(this.origin,base+'/history/'+input.revisionId,token,{operationId,label:input.label},signal,'PATCH');
+        if(!result.saved||result.revisionId!==input.revisionId||result.operationId!==operationId)throw new ConnectionError('INCOMPATIBLE','Название не подтверждено.');return result;
+      }
+      const result=await request<AdapterSavedChange>(this.origin,base+'/restore',token,{operationId,baseRevisionId:input.baseRevisionId,revisionId:input.revisionId},signal);
+      if(!validSaved(result,input.projectId,operationId))throw new ConnectionError('INCOMPATIBLE','Восстановление не подтверждено.');return savedResult(result);
+    });
+  }
+  async exportProject(input:{action:'start';projectId:string;revisionId:string;kind:'source'|'web';operationId?:string}|{action:'status';exportId:string},signal?:AbortSignal) {
+    const operationId=input.action==='start'?input.operationId??randomUUID():randomUUID();
+    return this.workspaceMutation(operationId,undefined,signal,async token=>{
+      let exportId:string;
+      if(input.action==='start'){
+        if(!projectKey(input.projectId)||!id(input.revisionId)||!id(operationId)||!['source','web'].includes(input.kind))throw new ConnectionError('INVALID_REQUEST','Нужны проект, UUID версии/операции и формат source или web.');
+        const result=await request<{id:string}>(this.origin,'/api/v1/adapters/projects/'+input.projectId+'/exports',token,{operationId,revisionId:input.revisionId,kind:input.kind},signal);exportId=result.id;
+      }else exportId=input.exportId;
+      if(!id(exportId))throw new ConnectionError('INCOMPATIBLE','Нужен UUID экспорта.');
+      const result=await request<ExportInfo>(this.origin,'/api/v1/exports/'+exportId,token,undefined,signal);
+      if(result.id!==exportId||!['queued','running','ready','failed','cancelled'].includes(result.status)||result.browserUrl!==this.origin+'/?export='+exportId)throw new ConnectionError('INCOMPATIBLE','Сервер не подтвердил экспорт.');
+      return {...result,operationId};
+    });
+  }
   async buildStatus(buildId: string, signal?: AbortSignal): Promise<BuildInfo> {
     if (!id(buildId)) throw new ConnectionError('INVALID_REQUEST', 'Нужен UUID сборки.');
     const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
@@ -268,10 +311,10 @@ function validProject(value: any): boolean {
   return value && projectKey(value.id) && typeof value.name === 'string' && typeof value.description === 'string';
 }
 function validAccess(value: any): value is ProjectAccess {
-  return value && ['owner', 'viewer', 'editor'].includes(value.role)
-    && typeof value.canEdit === 'boolean' && typeof value.canManage === 'boolean' && typeof value.canUseAgent === 'boolean'
+  return value && ['owner', 'viewer', 'commenter', 'editor'].includes(value.role)
+    && typeof value.canComment === 'boolean' && typeof value.canEdit === 'boolean' && typeof value.canManage === 'boolean' && typeof value.canUseAgent === 'boolean'
     && (!value.canUseAgent || value.canEdit) && (!value.canManage || value.role === 'owner')
-    && (value.role !== 'viewer' || !value.canEdit);
+    && (!['viewer','commenter'].includes(value.role) || !value.canEdit);
 }
 function validSaved(value: any, projectId: ExampleKey, operationId: string): value is AdapterSavedChange {
   return value?.saved === true && value.projectId === projectId && value.operationId === operationId && id(value.revisionId)

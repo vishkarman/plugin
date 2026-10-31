@@ -63,7 +63,8 @@ export function DesktopStudio({ url, bridge }: { url: string; bridge: DesktopBro
       element.addEventListener('dom-ready', () => {
         if (!navigated) {
           navigated = true;
-          void element.loadURL(url).catch(failed);
+          const studioUrl=new URL(url);studioUrl.searchParams.set('surface','dsh-desktop');
+          void element.loadURL(studioUrl.href).catch(failed);
         } else { setLoading(false); setError(''); }
       }, { signal: lifetime.signal });
       element.addEventListener('did-fail-load', event => {
