@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { API_VERSION, CAPABILITY, type ServerInfo, type ProjectContext, type SavedChange, type ChangeInput } from '../contracts/index.js';
 import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type AdapterChangeCheck, type ChangeConflict, type SourcePathName, type ExampleKey } from '../contracts/adapters.js';
 import type { BuildInfo } from '../contracts/runner.js';
+import { ACCESS_CAPABILITY, type AuthUser, type ProjectAccess } from '../contracts/access.js';
 
 export const defaultCredentialsFile = join(homedir(), 'Library/Application Support/Vishvakarma/dev/config/plugin-credentials.json');
 export interface Config { serverUrl: string; credentialsFile: string }
@@ -66,10 +67,17 @@ export async function request<T>(origin: string, path: string, token?: string, b
           conflicts: conflictsOf(error.conflicts),
         });
       }
+      if (response.status === 403 && ['READ_ONLY', 'AGENT_FORBIDDEN'].includes(data?.error?.code)) {
+        throw new ConnectionError(data.error.code, data.error.code === 'READ_ONLY'
+          ? 'У вас роль Viewer: проект доступен только для чтения. Ничего не сохранено; не повторяйте запись и не обходите права другим инструментом.'
+          : 'Владелец не разрешил агенту изменять этот проект. Ничего не сохранено; не повторяйте запись. Для работы через DSH нужен Editor с разрешением агента.');
+      }
+      if (response.status === 404 && data?.error?.code === 'PROJECT_NOT_FOUND')
+        throw new ConnectionError('PROJECT_NOT_FOUND', 'Проект недоступен: он отсутствует или доступ отозван. Перечитайте список доступных проектов; не пытайтесь создать его вместо открытия.');
       const codes: Record<number, [string, string]> = {
         400: ['INVALID_REQUEST', 'Сервер отклонил параметры изменения.'],
         401: ['UNAUTHORIZED', 'Доступ отсутствует или отозван. Подключитесь заново.'],
-        403: ['FORBIDDEN', 'Нет доступа к этой установке или операции.'],
+        403: ['FORBIDDEN', 'Нет права на эту операцию. Не повторяйте её и не обходите ограничение другим инструментом; права меняет владелец проекта.'],
         404: ['NOT_FOUND', 'Проект или ресурс не найден.'],
         409: ['CONFLICT', 'Конфликт: перечитайте проект перед новым изменением.'],
         422: ['UNSUPPORTED_OPERATION', 'Адаптер не может выполнить изменение. Перечитайте цель и её доступные операции; для других изменений используйте исходники.'],
@@ -89,7 +97,15 @@ export async function serverInfo(origin: string, signal?: AbortSignal): Promise<
   const info = await request<ServerInfo>(origin, '/api/v1/server', undefined, undefined, signal);
   if (info.apiVersion !== API_VERSION || !id(info.installationId) || !info.capabilities?.includes(CAPABILITY))
     throw new ConnectionError('INCOMPATIBLE', 'Установка не поддерживает API этого прототипа.');
+  if (!info.capabilities.includes(ACCESS_CAPABILITY))
+    throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает права проектов. Требуется access.project-roles.v1; обновите сервер до прототипа 6.');
   return info;
+}
+export async function currentUser(origin: string, token: string, signal?: AbortSignal): Promise<AuthUser> {
+  const result = await request<{ user: AuthUser }>(origin, '/api/v1/auth/me', token, undefined, signal);
+  if (!result?.user || !id(result.user.id) || typeof result.user.username !== 'string' || typeof result.user.isOwner !== 'boolean')
+    throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемую учётную запись.');
+  return result.user;
 }
 export class Connection {
   readonly origin: string;
@@ -130,22 +146,31 @@ export class Connection {
       }
     }
   }
-  async adapterExamples(signal?: AbortSignal): Promise<{ examples: AdapterExample[] }> {
+  async adapterExamples(signal?: AbortSignal): Promise<{ examples: (AdapterExample & { access: ProjectAccess })[]; canCreateExamples: boolean }> {
     const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
-    const result = await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal);
-    if (!Array.isArray(result.examples) || result.examples.some(example => !exampleKey(example.id) || typeof example.name !== 'string'))
+    const user = await currentUser(this.origin, token, signal);
+    if (user.isOwner) {
+      const result = await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal);
+      if (!Array.isArray(result.examples) || result.examples.some(example => !validExample(example)))
+        throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый список примеров.');
+      return { examples: result.examples.map(example => ({ ...example, access: { role: 'owner', canEdit: true, canManage: true, canUseAgent: true } })), canCreateExamples: true };
+    }
+    const result = await request<{ projects: (AdapterExample & { access: ProjectAccess })[] }>(this.origin, '/api/v1/adapters/projects', token, undefined, signal);
+    if (!Array.isArray(result.projects) || result.projects.some(example => !validExample(example) || !validAccess(example.access)))
       throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый список примеров.');
-    return result;
+    return { examples: result.projects, canCreateExamples: false };
   }
   async adapterProject(projectId: ExampleKey, open: boolean, targetId?: string, signal?: AbortSignal): Promise<AdapterProjectContext> {
     if (!exampleKey(projectId) || (targetId !== undefined && (!targetId || targetId.length > 256)))
       throw new ConnectionError('INVALID_REQUEST', 'Нужен существующий пример и допустимый идентификатор цели.');
     const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
-    const path = open ? '/api/v1/adapters/examples/' + projectId
+    // Opening a shared project is always a read; guests never seed templates.
+    const create = open && (await currentUser(this.origin, token, signal)).isOwner;
+    const path = create ? '/api/v1/adapters/examples/' + projectId
       : '/api/v1/adapters/projects/' + projectId + (targetId ? '?targetId=' + encodeURIComponent(targetId) : '');
-    const result = await request<AdapterProjectContext>(this.origin, path, token, open ? {} : undefined, signal);
+    const result = await request<AdapterProjectContext>(this.origin, path, token, create ? {} : undefined, signal);
     if (result.projectId !== projectId || !id(result.revisionId) || result.saved !== true || !Array.isArray(result.files)
-      || !Array.isArray(result.analysis?.targets) || !Array.isArray(result.instructions))
+      || !Array.isArray(result.analysis?.targets) || !Array.isArray(result.instructions) || !validAccess(result.access))
       throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый контекст адаптеров.');
     return result;
   }
@@ -205,6 +230,15 @@ export class Connection {
   }
 }
 function exampleKey(value: unknown): value is ExampleKey { return ['editorial', 'dashboard', 'scene'].includes(value as string); }
+function validExample(value: any): value is AdapterExample {
+  return value && exampleKey(value.id) && typeof value.name === 'string' && typeof value.description === 'string';
+}
+function validAccess(value: any): value is ProjectAccess {
+  return value && ['owner', 'viewer', 'editor'].includes(value.role)
+    && typeof value.canEdit === 'boolean' && typeof value.canManage === 'boolean' && typeof value.canUseAgent === 'boolean'
+    && (!value.canUseAgent || value.canEdit) && (!value.canManage || value.role === 'owner')
+    && (value.role !== 'viewer' || !value.canEdit);
+}
 function validSaved(value: any, projectId: ExampleKey, operationId: string): value is AdapterSavedChange {
   return value?.saved === true && value.projectId === projectId && value.operationId === operationId && id(value.revisionId)
     && (value.baseRevisionId === undefined || id(value.baseRevisionId))

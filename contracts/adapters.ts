@@ -1,4 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
+import type { ProjectAccess } from './access.js';
 import type { SceneSource, BuildInfo } from './runner.js';
 
 export const ADAPTER_CAPABILITY = 'adapters.source-editing.v1';
@@ -44,6 +45,7 @@ export interface AdapterAnalysis {
 export interface AdapterInstruction { adapterId: string; version: string; text: string }
 export interface AdapterExample { id: ExampleKey; name: string; description: string }
 export interface AdapterProjectContext {
+  access: ProjectAccess;
   projectId: ExampleKey; name: string; revisionId: string; saved: true;
   files: { path: SourcePathName; content: string; sha256: string }[];
   analysis: AdapterAnalysis; instructions: AdapterInstruction[];

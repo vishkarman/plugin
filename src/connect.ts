@@ -2,7 +2,7 @@
 import { mkdir, writeFile, rename, chmod } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { defaultCredentialsFile, originOf, privateJson, request, serverInfo, type Credentials } from './connection.js';
+import { defaultCredentialsFile, originOf, privateJson, currentUser, serverInfo, type Credentials } from './connection.js';
 
 const [url, tokenFile, outputFile = defaultCredentialsFile] = process.argv.slice(2);
 try {
@@ -10,7 +10,7 @@ try {
   const origin = originOf(url), info = await serverInfo(origin);
   const issued = await privateJson(resolve(tokenFile)) as Credentials;
   if (issued.installationId !== info.installationId || !/^[A-Za-z0-9_-]{43}$/.test(issued.token)) throw new Error('Токен принадлежит другой установке или некорректен.');
-  await request(origin, '/api/v1/projects/demo', issued.token);
+  await currentUser(origin, issued.token);
   const file = resolve(outputFile), temporary = file + '.' + randomUUID();
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   await writeFile(temporary, JSON.stringify({ origin, installationId: info.installationId, tokenId: issued.tokenId, token: issued.token }) + '\n', { mode: 0o600, flag: 'wx' });

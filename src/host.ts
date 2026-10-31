@@ -31,12 +31,12 @@ export function apply(ctx: Context, config: ConnectionConfig) {
   new StudioService(ctx, connection);
   ctx.typert.remotes.register(studioRemote);
   ctx.tools.register(defineTool({
-    name: 'vishvakarma_read_project', description: 'Прочитать demo-проект Vishvakarma, исходный HTML и текущую ревизию перед изменением.',
+    name: 'vishvakarma_read_project', description: 'Прочитать исходный demo-проект Vishvakarma, HTML и ревизию. Доступен только владельцу установки; гости работают с доступными проектами через vishvakarma_adapter_project.',
     parameters: {}, output, isConcurrencySafe: () => true,
     execute: async (_args, exec) => run(() => connection.read(exec.signal)),
   }));
   ctx.tools.register(defineTool({
-    name: 'vishvakarma_apply_change', description: 'Заменить только текст #demo-title в index.html на прочитанной базовой ревизии. При конфликте перечитайте проект. Успех — только saved:true.',
+    name: 'vishvakarma_apply_change', description: 'Только владельцу установки: заменить текст #demo-title исходного demo в index.html на прочитанной базовой ревизии. Не обходите этим инструментом ограничения доступа к другим проектам. При конфликте перечитайте проект. Успех — только saved:true.',
     parameters: {
       baseRevisionId: { type: 'string', required: true, description: 'UUID последней прочитанной ревизии' },
       resourcePath: { type: 'string', required: true, enum: ['index.html'] },
