@@ -3,14 +3,17 @@ import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { API_VERSION, CAPABILITY, type ServerInfo, type ProjectContext, type SavedChange, type ChangeInput } from '../contracts/index.js';
-import { ADAPTER_CAPABILITY, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type ExampleKey } from '../contracts/adapters.js';
+import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type AdapterChangeCheck, type ChangeConflict, type SourcePathName, type ExampleKey } from '../contracts/adapters.js';
 import type { BuildInfo } from '../contracts/runner.js';
 
 export const defaultCredentialsFile = join(homedir(), 'Library/Application Support/Vishvakarma/dev/config/plugin-credentials.json');
 export interface Config { serverUrl: string; credentialsFile: string }
 export interface Credentials { origin: string; installationId: string; token: string; tokenId: string }
+interface ConflictDetails { baseRevisionId?: string; conflicts?: ChangeConflict[] }
+export interface AdapterChangeOptions { action?: 'check' | 'apply'; operationId?: string }
 export class ConnectionError extends Error {
-  constructor(readonly code: string, message: string, readonly revisionId?: string, readonly operationId?: string) { super(message); }
+  constructor(readonly code: string, message: string, readonly revisionId?: string, readonly operationId?: string,
+    readonly details: ConflictDetails = {}) { super(message); }
 }
 export function originOf(value: string): string {
   try {
@@ -28,6 +31,19 @@ export async function privateJson(file: string): Promise<unknown> {
   } catch { throw new ConnectionError('CREDENTIALS', 'Не удалось прочитать приватный файл подключения (требуются права 0600).'); }
 }
 const id = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+const sourcePath = (value: unknown): value is SourcePathName => value === 'index.html' || value === 'main.tsx' || value === 'style.css';
+const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+function conflictsOf(value: unknown): ChangeConflict[] {
+  if (!Array.isArray(value)) return [];
+  const result: ChangeConflict[] = [];
+  for (const item of value.slice(0, 3)) {
+    if (!item || typeof item !== 'object' || !sourcePath(item.path) || !hash(item.baseHash) || !hash(item.currentHash)) continue;
+    if (item.code === 'FILE_CHANGED') result.push({ path: item.path, code: item.code, baseHash: item.baseHash, currentHash: item.currentHash });
+    else if (item.code === 'BASE_HASH_MISMATCH' && hash(item.expectedHash))
+      result.push({ path: item.path, code: item.code, baseHash: item.baseHash, currentHash: item.currentHash, expectedHash: item.expectedHash });
+  }
+  return result;
+}
 export async function request<T>(origin: string, path: string, token?: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   signal?.throwIfAborted();
   try {
@@ -39,6 +55,17 @@ export async function request<T>(origin: string, path: string, token?: string, b
     });
     const data = await response.json() as any;
     if (!response.ok) {
+      if (path.startsWith('/api/v1/adapters/') && ((response.status === 409 && data?.error?.code === 'CHANGE_CONFLICT')
+        || (response.status === 400 && data?.error?.code === 'RESOURCE_CONFLICT'))) {
+        const error = data.error;
+        throw new ConnectionError(error.code, error.code === 'CHANGE_CONFLICT'
+          ? 'Изменяемый файл изменился после чтения. Ничего не сохранено: перечитайте проект и переоцените правку, не подменяйте базу или хеши для повтора.'
+          : 'Хеш файла не совпадает с указанной базовой ревизией. Ничего не сохранено: перечитайте исходники и проверьте запрос.',
+        id(error.revisionId) ? error.revisionId : undefined, undefined, {
+          ...(id(error.baseRevisionId) ? { baseRevisionId: error.baseRevisionId } : {}),
+          conflicts: conflictsOf(error.conflicts),
+        });
+      }
       const codes: Record<number, [string, string]> = {
         400: ['INVALID_REQUEST', 'Сервер отклонил параметры изменения.'],
         401: ['UNAUTHORIZED', 'Доступ отсутствует или отозван. Подключитесь заново.'],
@@ -76,7 +103,9 @@ export class Connection {
     const info = await serverInfo(this.origin, signal);
     if (info.installationId !== credentials.installationId) throw new ConnectionError('RECONNECT_REQUIRED', 'Установка изменилась. Требуется новое подключение.');
     if (capability && !info.capabilities.includes(capability))
-      throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает адаптеры исходников. Обновите сервер до прототипа 3.');
+      throw new ConnectionError('INCOMPATIBLE', capability === ADAPTER_REBASE_CAPABILITY
+        ? 'Сервер не поддерживает проверку параллельных правок. Требуется adapters.checked-rebase.v1; обновите сервер до прототипа 5.'
+        : 'Сервер не поддерживает адаптеры исходников. Требуется adapters.source-editing.v1.');
     return credentials as Credentials;
   }
   async read(signal?: AbortSignal): Promise<ProjectContext> {
@@ -120,28 +149,43 @@ export class Connection {
       throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый контекст адаптеров.');
     return result;
   }
-  async adapterChange(projectId: ExampleKey, baseRevisionId: string, operation: AdapterChangeInput['operation'], signal?: AbortSignal): Promise<AdapterSavedChange> {
-    if (!exampleKey(projectId) || !id(baseRevisionId))
-      throw new ConnectionError('INVALID_REQUEST', 'Нужны существующий проект и UUID последней прочитанной ревизии.');
-    if (operation.type === 'files' && (operation.files.length < 1 || operation.files.length > 3
-      || new Set(operation.files.map(file => file.path)).size !== operation.files.length
-      || operation.files.some(file => !/^[a-f0-9]{64}$/.test(file.expectedHash) || file.content.length > 262144)))
-      throw new ConnectionError('INVALID_REQUEST', 'Передайте от одного до трёх разных файлов с прочитанными SHA-256; максимум 262144 символа на файл.');
-    if (operation.type === 'semantic' && ((!operation.targetId || operation.targetId.length > 256)
-      || (!operation.adapterId || operation.adapterId.length > 100) || (!operation.property || operation.property.length > 100)
-      || (typeof operation.value === 'string' ? [...operation.value].length > 4096 : !Number.isFinite(operation.value))))
-      throw new ConnectionError('INVALID_REQUEST', 'Выберите цель, адаптер, свойство и значение из последнего контекста.');
-    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
-    const input: AdapterChangeInput = { operationId: randomUUID(), baseRevisionId, operation };
+  async adapterChange(projectId: ExampleKey, baseRevisionId: string, operation: AdapterChangeInput['operation'], signal?: AbortSignal,
+    options: AdapterChangeOptions = {}): Promise<AdapterSavedChange | AdapterChangeCheck> {
+    const operationId = options.operationId ?? randomUUID(), action = options.action ?? 'apply';
     try {
-      const result = await request<AdapterSavedChange>(this.origin, '/api/v1/adapters/projects/' + projectId + '/changes', token, input, signal);
-      if (result.saved !== true || result.projectId !== projectId || result.operationId !== input.operationId || !id(result.revisionId))
+      if (!exampleKey(projectId) || !id(baseRevisionId) || !id(operationId) || !['check', 'apply'].includes(action))
+        throw new ConnectionError('INVALID_REQUEST', 'Нужны существующий проект, UUID прочитанной ревизии/операции и действие check или apply.');
+      if (operation.type === 'files' && (operation.files.length < 1 || operation.files.length > 3
+        || new Set(operation.files.map(file => file.path)).size !== operation.files.length
+        || operation.files.some(file => !hash(file.expectedHash) || file.content.length > 262144)))
+        throw new ConnectionError('INVALID_REQUEST', 'Передайте от одного до трёх разных файлов с прочитанными SHA-256; максимум 262144 символа на файл.');
+      if (operation.type === 'semantic' && ((!operation.targetId || operation.targetId.length > 256)
+        || (!operation.adapterId || operation.adapterId.length > 100) || (!operation.property || operation.property.length > 100)
+        || (typeof operation.value === 'string' ? [...operation.value].length > 4096 : !Number.isFinite(operation.value))))
+        throw new ConnectionError('INVALID_REQUEST', 'Выберите цель, адаптер, свойство и значение из последнего контекста.');
+      const { token } = await this.credentials(signal, ADAPTER_REBASE_CAPABILITY);
+      const input: AdapterChangeInput = { operationId, baseRevisionId, rebase: 'if-unchanged', operation };
+      const result = await request<AdapterSavedChange | AdapterChangeCheck>(this.origin,
+        '/api/v1/adapters/projects/' + projectId + '/changes' + (action === 'check' ? '/check' : ''), token, input, signal);
+      if (action === 'check') {
+        if (!validCheck(result, projectId, input)) throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый результат проверки; сохранение не подтверждено.');
+        return {
+          projectId: result.projectId, operationId: result.operationId, baseRevisionId: result.baseRevisionId,
+          currentRevisionId: result.currentRevisionId, status: result.status, rebased: result.rebased,
+          touchedFiles: [...result.touchedFiles], conflicts: conflictsOf(result.conflicts),
+          ...(result.savedResult ? { savedResult: savedResult(result.savedResult) } : {}),
+        };
+      }
+      if (!validSaved(result, projectId, operationId) || (result.baseRevisionId !== undefined && result.baseRevisionId !== baseRevisionId)) {
         throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил сохранённую ревизию.');
-      return result;
+      }
+      return savedResult(result);
     } catch (error) {
       // Never create a fresh idempotency key to retry an uncertain write.
-      if (error instanceof ConnectionError) throw new ConnectionError(error.code, error.message, error.revisionId, input.operationId);
-      throw error;
+      if (error instanceof ConnectionError) throw new ConnectionError(error.code, error.message, error.revisionId,
+        id(operationId) ? operationId : undefined, { ...error.details, ...(id(baseRevisionId) ? { baseRevisionId } : {}) });
+      throw new ConnectionError(signal?.aborted ? 'CANCELLED' : 'UNCONFIRMED', 'Результат не подтверждён. Перечитайте проект.', undefined,
+        id(operationId) ? operationId : undefined, id(baseRevisionId) ? { baseRevisionId } : {});
     }
   }
   async adapterBuild(projectId: ExampleKey, revisionId: string, signal?: AbortSignal): Promise<{ id: string }> {
@@ -161,3 +205,25 @@ export class Connection {
   }
 }
 function exampleKey(value: unknown): value is ExampleKey { return ['editorial', 'dashboard', 'scene'].includes(value as string); }
+function validSaved(value: any, projectId: ExampleKey, operationId: string): value is AdapterSavedChange {
+  return value?.saved === true && value.projectId === projectId && value.operationId === operationId && id(value.revisionId)
+    && (value.baseRevisionId === undefined || id(value.baseRevisionId))
+    && (value.appliedOnRevisionId === undefined || id(value.appliedOnRevisionId))
+    && (value.rebased === undefined || typeof value.rebased === 'boolean');
+}
+function savedResult(value: AdapterSavedChange): AdapterSavedChange {
+  return { projectId: value.projectId, operationId: value.operationId, revisionId: value.revisionId, saved: true,
+    ...(value.baseRevisionId === undefined ? {} : { baseRevisionId: value.baseRevisionId }),
+    ...(value.appliedOnRevisionId === undefined ? {} : { appliedOnRevisionId: value.appliedOnRevisionId }),
+    ...(value.rebased === undefined ? {} : { rebased: value.rebased }) };
+}
+function validCheck(value: any, projectId: ExampleKey, input: AdapterChangeInput): value is AdapterChangeCheck {
+  if (!value || value.projectId !== projectId || value.operationId !== input.operationId || value.baseRevisionId !== input.baseRevisionId
+    || !id(value.currentRevisionId) || typeof value.rebased !== 'boolean' || !['ready', 'conflict', 'already-applied'].includes(value.status)
+    || !Array.isArray(value.touchedFiles) || value.touchedFiles.length > 3 || !value.touchedFiles.every(sourcePath)
+    || !Array.isArray(value.conflicts) || value.conflicts.length > 3 || conflictsOf(value.conflicts).length !== value.conflicts.length) return false;
+  if (value.status === 'already-applied') return validSaved(value.savedResult, projectId, input.operationId)
+    && (value.savedResult.baseRevisionId === undefined || value.savedResult.baseRevisionId === input.baseRevisionId);
+  return value.savedResult === undefined && (value.status === 'ready' ? value.conflicts.length === 0
+    : value.conflicts.length > 0 && value.conflicts.every((item: ChangeConflict) => item.code === 'FILE_CHANGED'));
+}

@@ -5,6 +5,8 @@ import { output, run } from './tool-output.js';
 
 const project = { type: 'string', required: true, enum: ['editorial', 'dashboard', 'scene'], description: 'Идентификатор проекта из списка примеров' } as const;
 const baseRevision = { type: 'string', required: true, description: 'UUID последней прочитанной ревизии этого проекта' } as const;
+const changeAction = { type: 'string', enum: ['check', 'apply'], default: 'apply', description: 'apply сохраняет (по умолчанию); check только проверяет сейчас и ничего не резервирует' } as const;
+const operationId = { type: 'string', description: 'Необязательно: UUID того же запроса из check или ошибки. Для повторного обращения сохраняйте этот ID, базовую ревизию и payload; для нового изменённого запроса опустите ID' } as const;
 
 export function registerAdapterTools(ctx: Context, connection: Connection) {
   ctx.tools.register(defineTool({
@@ -25,31 +27,31 @@ export function registerAdapterTools(ctx: Context, connection: Connection) {
   }));
   ctx.tools.register(defineTool({
     name: 'vishvakarma_edit_target',
-    description: 'Семантическое изменение цели: только adapterId/property/scope из её operations в последнем контексте. instance изменяет экземпляр, component — все экземпляры компонента, token — общий токен. Сохраняет исходник и ревизию; сборку нужно запустить отдельно.',
+    description: 'Семантическое изменение цели по operations из прочитанного контекста. Допускает старую базу, только если весь исходный файл цели не изменился. action=check необязателен и не сохраняет; по умолчанию apply. При конфликте остановитесь и перечитайте источник, не подменяйте базу ради повтора. Сборка запускается отдельно.',
     parameters: {
-      projectId: project, baseRevisionId: baseRevision,
+      projectId: project, baseRevisionId: baseRevision, action: changeAction, operationId,
       targetId: { type: 'string', required: true, description: 'id из analysis.targets' },
       adapterId: { type: 'string', required: true, description: 'adapterId из выбранной операции' },
       scope: { type: 'string', required: true, enum: ['instance', 'component', 'token'], description: 'Область действия выбранной операции; не расширяйте её без запроса пользователя' },
       property: { type: 'string', required: true, description: 'property из выбранной операции' },
       value: { required: true, oneOf: [{ type: 'string' }, { type: 'number' }], description: 'Значение требуемого valueType: text/color/number' },
-    }, output, isConcurrencySafe: () => false,
-    execute: async ({ projectId, baseRevisionId, ...operation }, exec) => run(() =>
-      connection.adapterChange(projectId, baseRevisionId, { type: 'semantic', ...operation }, exec.signal)),
+    }, output, isConcurrencySafe: args => args.action === 'check',
+    execute: async ({ projectId, baseRevisionId, action, operationId, ...operation }, exec) => run(() =>
+      connection.adapterChange(projectId, baseRevisionId, { type: 'semantic', ...operation }, exec.signal, { action, operationId })),
   }));
   ctx.tools.register(defineTool({
     name: 'vishvakarma_write_files',
-    description: 'Изменить исходники, когда семантической операции нет: до трёх полных файлов с прочитанными SHA-256. Сохраняет ревизию, но не обещает успешную сборку. Сохраните существующий дизайн и поведение вне запроса пользователя.',
+    description: 'Изменить до трёх полных исходников с прочитанными SHA-256. Старая база допустима, только если все изменяемые файлы остались прежними; правки внутри одного файла не сливаются. action=check необязателен, по умолчанию apply. Конфликт отменяет всю запись: перечитайте проект и переоцените правку, не заменяйте хеши ради повтора.',
     parameters: {
-      projectId: project, baseRevisionId: baseRevision,
+      projectId: project, baseRevisionId: baseRevision, action: changeAction, operationId,
       files: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
         path: { type: 'string', required: true, enum: ['index.html', 'main.tsx', 'style.css'] },
         expectedHash: { type: 'string', required: true, description: 'sha256 этого файла из последнего чтения' },
         content: { type: 'string', required: true, description: 'Полный новый UTF-8 исходник, до 262144 символов' },
       } } },
-    }, output, isConcurrencySafe: () => false,
-    execute: async ({ projectId, baseRevisionId, files }, exec) => run(() =>
-      connection.adapterChange(projectId, baseRevisionId, { type: 'files', files }, exec.signal)),
+    }, output, isConcurrencySafe: args => args.action === 'check',
+    execute: async ({ projectId, baseRevisionId, files, action, operationId }, exec) => run(() =>
+      connection.adapterChange(projectId, baseRevisionId, { type: 'files', files }, exec.signal, { action, operationId })),
   }));
   ctx.tools.register(defineTool({
     name: 'vishvakarma_build',

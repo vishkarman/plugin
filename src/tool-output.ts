@@ -8,6 +8,8 @@ export async function run(action: () => Promise<unknown>): Promise<string> {
       code: error.code, message: error.message,
       ...(error.revisionId ? { revisionId: error.revisionId } : {}),
       ...(error.operationId ? { operationId: error.operationId } : {}),
+      ...(error.details.baseRevisionId ? { baseRevisionId: error.details.baseRevisionId } : {}),
+      ...(error.details.conflicts ? { conflicts: error.details.conflicts } : {}),
     } : { code: 'UNCONFIRMED', message: 'Результат не подтверждён. Перечитайте проект.' } });
   }
 }

@@ -2,6 +2,7 @@ import { Type, type Static } from '@sinclair/typebox';
 import type { SceneSource, BuildInfo } from './runner.js';
 
 export const ADAPTER_CAPABILITY = 'adapters.source-editing.v1';
+export const ADAPTER_REBASE_CAPABILITY = 'adapters.checked-rebase.v1';
 export const ExampleId = Type.Union([Type.Literal('editorial'), Type.Literal('dashboard'), Type.Literal('scene')]);
 export type ExampleKey = Static<typeof ExampleId>;
 export const AdapterParams = Type.Object({ id: ExampleId }, { additionalProperties: false });
@@ -21,6 +22,7 @@ export const FileEdit = Type.Object({
 }, { additionalProperties: false });
 export const AdapterChange = Type.Object({
   operationId: Type.String({ format: 'uuid' }), baseRevisionId: Type.String({ format: 'uuid' }),
+  rebase: Type.Optional(Type.Literal('if-unchanged')),
   operation: Type.Union([SemanticEdit, FileEdit]),
 }, { additionalProperties: false });
 export type SemanticOperation = Static<typeof SemanticEdit>;
@@ -49,6 +51,19 @@ export interface AdapterProjectContext {
   latest: BuildInfo | null;
   preview: (BuildInfo & { revisionId: string }) | null;
 }
-export interface AdapterSavedChange { projectId: ExampleKey; revisionId: string; saved: true; operationId: string }
+export interface AdapterSavedChange {
+  projectId: ExampleKey; revisionId: string; saved: true; operationId: string;
+  baseRevisionId?: string; appliedOnRevisionId?: string; rebased?: boolean;
+}
+export type ChangeConflict = {
+  path: SourcePathName; code: 'FILE_CHANGED'; baseHash: string; currentHash: string;
+} | {
+  path: SourcePathName; code: 'BASE_HASH_MISMATCH'; baseHash: string; currentHash: string; expectedHash: string;
+};
+export interface AdapterChangeCheck {
+  projectId: ExampleKey; operationId: string; baseRevisionId: string; currentRevisionId: string;
+  status: 'ready' | 'conflict' | 'already-applied'; rebased: boolean;
+  touchedFiles: SourcePathName[]; conflicts: ChangeConflict[]; savedResult?: AdapterSavedChange;
+}
 // Immutable source files remain authoritative; preview instrumentation is derived from them.
 export type AdapterSource = SceneSource;
