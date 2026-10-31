@@ -3,12 +3,14 @@ import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { API_VERSION, CAPABILITY, type ServerInfo, type ProjectContext, type SavedChange, type ChangeInput } from '../contracts/index.js';
+import { ADAPTER_CAPABILITY, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type ExampleKey } from '../contracts/adapters.js';
+import type { BuildInfo } from '../contracts/runner.js';
 
 export const defaultCredentialsFile = join(homedir(), 'Library/Application Support/Vishvakarma/dev/config/plugin-credentials.json');
 export interface Config { serverUrl: string; credentialsFile: string }
 export interface Credentials { origin: string; installationId: string; token: string; tokenId: string }
 export class ConnectionError extends Error {
-  constructor(readonly code: string, message: string, readonly revisionId?: string) { super(message); }
+  constructor(readonly code: string, message: string, readonly revisionId?: string, readonly operationId?: string) { super(message); }
 }
 export function originOf(value: string): string {
   try {
@@ -43,6 +45,8 @@ export async function request<T>(origin: string, path: string, token?: string, b
         403: ['FORBIDDEN', 'Нет доступа к этой установке или операции.'],
         404: ['NOT_FOUND', 'Проект или ресурс не найден.'],
         409: ['CONFLICT', 'Конфликт: перечитайте проект перед новым изменением.'],
+        422: ['UNSUPPORTED_OPERATION', 'Адаптер не может выполнить изменение. Перечитайте цель и её доступные операции; для других изменений используйте исходники.'],
+        429: ['QUEUE_FULL', 'Очередь сборок заполнена. Дождитесь завершения текущей сборки.'],
         503: ['UNAVAILABLE', 'Сохранение не подтверждено. Перечитайте проект после восстановления связи.'],
       };
       const [code, message] = codes[response.status] ?? ['HTTP_ERROR', 'Сервер не подтвердил операцию.'];
@@ -63,7 +67,7 @@ export async function serverInfo(origin: string, signal?: AbortSignal): Promise<
 export class Connection {
   readonly origin: string;
   constructor(readonly config: Config) { this.origin = originOf(config.serverUrl); }
-  async credentials(signal?: AbortSignal): Promise<Credentials> {
+  async credentials(signal?: AbortSignal, capability?: string): Promise<Credentials> {
     const credentials = await privateJson(this.config.credentialsFile) as Partial<Credentials>;
     // Check the origin before any credential-bearing request, then bind the installation.
     if (credentials.origin !== this.origin) throw new ConnectionError('RECONNECT_REQUIRED', 'Адрес изменился. Для выбранной установки требуется новое подключение.');
@@ -71,6 +75,8 @@ export class Connection {
       throw new ConnectionError('CREDENTIALS', 'Некорректный файл подключения.');
     const info = await serverInfo(this.origin, signal);
     if (info.installationId !== credentials.installationId) throw new ConnectionError('RECONNECT_REQUIRED', 'Установка изменилась. Требуется новое подключение.');
+    if (capability && !info.capabilities.includes(capability))
+      throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает адаптеры исходников. Обновите сервер до прототипа 3.');
     return credentials as Credentials;
   }
   async read(signal?: AbortSignal): Promise<ProjectContext> {
@@ -95,4 +101,63 @@ export class Connection {
       }
     }
   }
+  async adapterExamples(signal?: AbortSignal): Promise<{ examples: AdapterExample[] }> {
+    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
+    const result = await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal);
+    if (!Array.isArray(result.examples) || result.examples.some(example => !exampleKey(example.id) || typeof example.name !== 'string'))
+      throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый список примеров.');
+    return result;
+  }
+  async adapterProject(projectId: ExampleKey, open: boolean, targetId?: string, signal?: AbortSignal): Promise<AdapterProjectContext> {
+    if (!exampleKey(projectId) || (targetId !== undefined && (!targetId || targetId.length > 256)))
+      throw new ConnectionError('INVALID_REQUEST', 'Нужен существующий пример и допустимый идентификатор цели.');
+    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
+    const path = open ? '/api/v1/adapters/examples/' + projectId
+      : '/api/v1/adapters/projects/' + projectId + (targetId ? '?targetId=' + encodeURIComponent(targetId) : '');
+    const result = await request<AdapterProjectContext>(this.origin, path, token, open ? {} : undefined, signal);
+    if (result.projectId !== projectId || !id(result.revisionId) || result.saved !== true || !Array.isArray(result.files)
+      || !Array.isArray(result.analysis?.targets) || !Array.isArray(result.instructions))
+      throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый контекст адаптеров.');
+    return result;
+  }
+  async adapterChange(projectId: ExampleKey, baseRevisionId: string, operation: AdapterChangeInput['operation'], signal?: AbortSignal): Promise<AdapterSavedChange> {
+    if (!exampleKey(projectId) || !id(baseRevisionId))
+      throw new ConnectionError('INVALID_REQUEST', 'Нужны существующий проект и UUID последней прочитанной ревизии.');
+    if (operation.type === 'files' && (operation.files.length < 1 || operation.files.length > 3
+      || new Set(operation.files.map(file => file.path)).size !== operation.files.length
+      || operation.files.some(file => !/^[a-f0-9]{64}$/.test(file.expectedHash) || file.content.length > 262144)))
+      throw new ConnectionError('INVALID_REQUEST', 'Передайте от одного до трёх разных файлов с прочитанными SHA-256; максимум 262144 символа на файл.');
+    if (operation.type === 'semantic' && ((!operation.targetId || operation.targetId.length > 256)
+      || (!operation.adapterId || operation.adapterId.length > 100) || (!operation.property || operation.property.length > 100)
+      || (typeof operation.value === 'string' ? [...operation.value].length > 4096 : !Number.isFinite(operation.value))))
+      throw new ConnectionError('INVALID_REQUEST', 'Выберите цель, адаптер, свойство и значение из последнего контекста.');
+    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
+    const input: AdapterChangeInput = { operationId: randomUUID(), baseRevisionId, operation };
+    try {
+      const result = await request<AdapterSavedChange>(this.origin, '/api/v1/adapters/projects/' + projectId + '/changes', token, input, signal);
+      if (result.saved !== true || result.projectId !== projectId || result.operationId !== input.operationId || !id(result.revisionId))
+        throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил сохранённую ревизию.');
+      return result;
+    } catch (error) {
+      // Never create a fresh idempotency key to retry an uncertain write.
+      if (error instanceof ConnectionError) throw new ConnectionError(error.code, error.message, error.revisionId, input.operationId);
+      throw error;
+    }
+  }
+  async adapterBuild(projectId: ExampleKey, revisionId: string, signal?: AbortSignal): Promise<{ id: string }> {
+    if (!exampleKey(projectId) || !id(revisionId)) throw new ConnectionError('INVALID_REQUEST', 'Нужны проект и UUID сохранённой ревизии.');
+    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
+    const result = await request<{ id: string }>(this.origin, '/api/v1/adapters/projects/' + projectId + '/builds', token, { revisionId }, signal);
+    if (!id(result.id)) throw new ConnectionError('INCOMPATIBLE', 'Сервер не подтвердил постановку сборки в очередь.');
+    return result;
+  }
+  async buildStatus(buildId: string, signal?: AbortSignal): Promise<BuildInfo> {
+    if (!id(buildId)) throw new ConnectionError('INVALID_REQUEST', 'Нужен UUID сборки.');
+    const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
+    const result = await request<BuildInfo>(this.origin, '/api/v1/runner/builds/' + buildId, token, undefined, signal);
+    if (result.id !== buildId || !['queued', 'running', 'succeeded', 'failed', 'cancelled'].includes(result.status))
+      throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемое состояние сборки.');
+    return result;
+  }
 }
+function exampleKey(value: unknown): value is ExampleKey { return ['editorial', 'dashboard', 'scene'].includes(value as string); }

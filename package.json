@@ -1,7 +1,7 @@
 {
   "name": "@vishkarman/plugin",
-  "version": "0.1.0-prototype.1",
-  "description": "Vishvakarma: DSH tools and Studio panel for the local design prototype",
+  "version": "0.3.0-prototype.3",
+  "description": "Vishvakarma: DSH tools, source adapters and Studio panel for local design prototypes",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
   "engines": {

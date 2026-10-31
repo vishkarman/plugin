@@ -1,6 +1,18 @@
 {
-  "source": "@vishkarman/server/contracts/index.ts",
   "apiVersion": "v1-prototype-1",
-  "serverVersion": "0.1.0-prototype.1",
-  "sha256": "f3962fdbc381eb873a6333077468089d96a8e3d4de375d3c43876165ee38979a"
+  "serverVersion": "0.3.0-prototype.3",
+  "files": {
+    "index.ts": {
+      "source": "@vishkarman/server/contracts/index.ts",
+      "sha256": "f3962fdbc381eb873a6333077468089d96a8e3d4de375d3c43876165ee38979a"
+    },
+    "runner.ts": {
+      "source": "@vishkarman/server/contracts/runner.ts",
+      "sha256": "79c082e00edc1af6aa09c19f080e6d82b3b865607531dcbd818217230a637edf"
+    },
+    "adapters.ts": {
+      "source": "@vishkarman/server/contracts/adapters.ts",
+      "sha256": "a6816e037631550123a4034da7544e72f556674c6076e8115a649d02503e6b43"
+    }
+  }
 }

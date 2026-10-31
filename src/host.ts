@@ -7,8 +7,10 @@ import '@deepseek-ai/dsh-typert-registry';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { Connection, ConnectionError, defaultCredentialsFile, serverInfo, type Config as ConnectionConfig } from './connection.js';
+import { Connection, defaultCredentialsFile, serverInfo, type Config as ConnectionConfig } from './connection.js';
 import { studioRemote, type StudioConnection } from './remote.js';
+import { registerAdapterTools } from './adapter-tools.js';
+import { output, run } from './tool-output.js';
 
 export const name = 'vishvakarma';
 export const inject = ['tools', 'skills', 'typert'];
@@ -22,13 +24,6 @@ class StudioService extends TypertRemoteService {
   async studio(): Promise<StudioConnection> {
     try { await serverInfo(this.connection.origin); return { url: this.connection.origin, available: true, message: '' }; }
     catch { return { url: this.connection.origin, available: false, message: 'Сервер Vishvakarma недоступен или несовместим. Запустите сервер и проверьте serverUrl.' }; }
-  }
-}
-const output = { schema: { type: 'string' as const }, render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }] };
-async function run(action: () => Promise<unknown>): Promise<string> {
-  try { return JSON.stringify(await action()); }
-  catch (error) {
-    return JSON.stringify({ error: error instanceof ConnectionError ? { code: error.code, message: error.message, ...(error.revisionId ? { revisionId: error.revisionId } : {}) } : { code: 'UNCONFIRMED', message: 'Результат не подтверждён. Перечитайте проект.' } });
   }
 }
 export function apply(ctx: Context, config: ConnectionConfig) {
@@ -50,6 +45,7 @@ export function apply(ctx: Context, config: ConnectionConfig) {
     }, output, isConcurrencySafe: () => false,
     execute: async (args, exec) => run(() => connection.change(args.baseRevisionId, args.text, exec.signal)),
   }));
+  registerAdapterTools(ctx, connection);
   const skillDir = fileURLToPath(new URL('../skills/vishvakarma/', import.meta.url));
   const skillPath = skillDir + 'SKILL.md';
   ctx.skills.registerProvider(() => ({
