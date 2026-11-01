@@ -1,6 +1,6 @@
 {
   "name": "@vishkarman/plugin",
-  "version": "0.8.0-stage.2",
+  "version": "0.9.2-stage.3",
   "description": "Vishvakarma design workspace, project tools and source adapters for DSH",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
@@ -26,6 +26,7 @@
   ],
   "scripts": {
     "build": "tsc --noEmit && node scripts/build.mjs",
+    "update:dsh": "node scripts/update-dsh.mjs",
     "connect": "node dist/connect.js"
   },
   "dsh": {
@@ -68,13 +69,16 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/dsh-api-remotes": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-commands": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-renderer": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-sidebar": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-sidebar-browser": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-sidebar-right": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-plugin-manager": "0.2.1-rc.5",
     "@deepseek-ai/dsh-skill": "0.2.1-rc.5",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
     "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5",
@@ -83,8 +87,10 @@
     "@sinclair/typebox": "^0.34.41",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.31",
+    "@types/semver": "7.7.1",
     "esbuild": "^0.25.0",
     "react": "^18.3.1",
+    "semver": "7.8.5",
     "typescript": "^5.9.0",
     "yaml": "^2.8.0",
     "zod": "^4.6.7"

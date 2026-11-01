@@ -1,3 +1,7 @@
+import {FormatRegistry} from '@sinclair/typebox';
+import {Value} from '@sinclair/typebox/value';
+import {EDITOR_CAPABILITY,PNG_CAPABILITY,EditorAuthoringUpdate} from '../contracts/editor.js';
+import {EDITOR_OPERATIONS_CAPABILITY,EditorActionRequest} from '../contracts/editor-operations.js';
 import { PRODUCT_CAPABILITY, type HistoryResult,type RevisionContext,type ExportInfo } from '../contracts/product.js';
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -8,6 +12,7 @@ import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, WORKSPACE_CAPABILITY, ty
 import type { BuildInfo } from '../contracts/runner.js';
 import { ACCESS_CAPABILITY, type AuthUser, type ProjectAccess } from '../contracts/access.js';
 
+FormatRegistry.Set('uuid',value=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 export const defaultCredentialsFile = join(homedir(), 'Library/Application Support/Vishvakarma/dev/config/plugin-credentials.json');
 export interface Config { serverUrl: string; credentialsFile: string }
 export interface Credentials { origin: string; installationId: string; token: string; tokenId: string }
@@ -48,7 +53,7 @@ function conflictsOf(value: unknown): ChangeConflict[] {
   }
   return result;
 }
-export async function request<T>(origin: string, path: string, token?: string, body?: unknown, signal?: AbortSignal, method?: 'POST' | 'PATCH'): Promise<T> {
+export async function request<T>(origin: string, path: string, token?: string, body?: unknown, signal?: AbortSignal, method?: 'POST' | 'PATCH' | 'PUT'): Promise<T> {
   signal?.throwIfAborted();
   try {
     const response = await fetch(origin + path, {
@@ -283,18 +288,38 @@ export class Connection {
       if(!validSaved(result,input.projectId,operationId))throw new ConnectionError('INCOMPATIBLE','Восстановление не подтверждено.');return savedResult(result);
     });
   }
-  async exportProject(input:{action:'start';projectId:string;revisionId:string;kind:'source'|'web';operationId?:string}|{action:'status';exportId:string},signal?:AbortSignal) {
+  async exportProject(input:{action:'start';projectId:string;revisionId:string;kind:'source'|'web'|'png';artboardId?:string;operationId?:string}|{action:'status';exportId:string},signal?:AbortSignal) {
     const operationId=input.action==='start'?input.operationId??randomUUID():randomUUID();
     return this.workspaceMutation(operationId,undefined,signal,async token=>{
       let exportId:string;
       if(input.action==='start'){
-        if(!projectKey(input.projectId)||!id(input.revisionId)||!id(operationId)||!['source','web'].includes(input.kind))throw new ConnectionError('INVALID_REQUEST','Нужны проект, UUID версии/операции и формат source или web.');
-        const result=await request<{id:string}>(this.origin,'/api/v1/adapters/projects/'+input.projectId+'/exports',token,{operationId,revisionId:input.revisionId,kind:input.kind},signal);exportId=result.id;
+        if(!projectKey(input.projectId)||!id(input.revisionId)||!id(operationId)||!['source','web','png'].includes(input.kind))throw new ConnectionError('INVALID_REQUEST','Нужны проект, UUID версии/операции и формат source или web.');
+        if(input.kind==='png'){await this.credentials(signal,PNG_CAPABILITY);if(!input.artboardId)throw new ConnectionError('INVALID_REQUEST','PNG требует artboardId из контекста.');}
+        const result=await request<{id:string}>(this.origin,'/api/v1/adapters/projects/'+input.projectId+'/exports',token,{operationId,revisionId:input.revisionId,kind:input.kind,...(input.artboardId?{artboardId:input.artboardId}:{})},signal);exportId=result.id;
       }else exportId=input.exportId;
       if(!id(exportId))throw new ConnectionError('INCOMPATIBLE','Нужен UUID экспорта.');
       const result=await request<ExportInfo>(this.origin,'/api/v1/exports/'+exportId,token,undefined,signal);
       if(result.id!==exportId||!['queued','running','ready','failed','cancelled'].includes(result.status)||result.browserUrl!==this.origin+'/?export='+exportId)throw new ConnectionError('INCOMPATIBLE','Сервер не подтвердил экспорт.');
       return {...result,operationId};
+    });
+  }
+  async editor(input:{action:'read';projectId:string;artboardId?:string;targetId?:string}|{action:'apply';projectId:string;kind:'source'|'artboards';payload:string},signal?:AbortSignal){
+    if(!projectKey(input.projectId))throw new ConnectionError('INVALID_REQUEST','Нужен id проекта.');
+    const base='/api/v1/adapters/projects/'+input.projectId;
+    if(input.action==='read'){
+      const {token}=await this.credentials(signal,EDITOR_OPERATIONS_CAPABILITY);
+      const query=new URLSearchParams();if(input.artboardId)query.set('artboardId',input.artboardId);if(input.targetId)query.set('targetId',input.targetId);
+      const result=await request<any>(this.origin,base+'/editor-context?'+query,token,undefined,signal);
+      const state=await request<any>(this.origin,base+'/editor?revisionId='+result.revisionId,token,undefined,signal);
+      return {...result,authoring:state.authoring,sourceRequestSchema:EditorActionRequest,artboardsRequestSchema:EditorAuthoringUpdate};
+    }
+    let payload:any;try{payload=JSON.parse(input.payload);}catch{throw new ConnectionError('INVALID_REQUEST','payload должен быть JSON.');}
+    const schema=input.kind==='source'?EditorActionRequest:EditorAuthoringUpdate;
+    if(!Value.Check(schema,payload))throw new ConnectionError('INVALID_REQUEST','Запрос не соответствует схеме из read.');
+    await this.credentials(signal,input.kind==='source'?EDITOR_OPERATIONS_CAPABILITY:EDITOR_CAPABILITY);
+    return this.workspaceMutation(payload.operationId,payload.baseRevisionId,signal,async token=>{
+      const result=await request<AdapterSavedChange>(this.origin,base+(input.kind==='source'?'/editor-actions':'/editor'),token,payload,signal,input.kind==='source'?'POST':'PUT');
+      if(!validSaved(result,input.projectId,payload.operationId))throw new ConnectionError('INCOMPATIBLE','Сохранение не подтверждено.');return savedResult(result);
     });
   }
   async buildStatus(buildId: string, signal?: AbortSignal): Promise<BuildInfo> {

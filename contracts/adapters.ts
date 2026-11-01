@@ -1,3 +1,4 @@
+import type {EditorAuthoring} from './editor.js';
 import { Type, type Static } from '@sinclair/typebox';
 import type { ProjectAccess } from './access.js';
 import type { SceneSource, BuildInfo } from './runner.js';
@@ -48,6 +49,7 @@ export interface AdapterAnalysis {
 export interface AdapterInstruction { adapterId: string; version: string; text: string }
 export interface AdapterExample { id: TemplateKey; name: string; description: string }
 export interface AdapterProjectContext {
+  authoring: EditorAuthoring;
   access: ProjectAccess;
   projectId: ExampleKey; name: string; revisionId: string; saved: true;
   entrypoint: string; assets: (SourceAsset & { url: string })[];

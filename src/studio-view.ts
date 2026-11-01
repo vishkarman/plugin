@@ -13,8 +13,10 @@ interface StudioGuest extends HTMLElement {
   loadURL(url: string): Promise<void>;
 }
 
-export function DesktopStudio({ url, bridge }: { url: string; bridge: DesktopBrowserBridge }) {
+export function DesktopStudio({ url, bridge, onNavigate }: { url: string; bridge: DesktopBrowserBridge; onNavigate?: (url: string) => void }) {
   const host = useRef<HTMLDivElement>(null);
+  const navigation = useRef(onNavigate);
+  navigation.current = onNavigate;
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -60,6 +62,13 @@ export function DesktopStudio({ url, bridge }: { url: string; bridge: DesktopBro
           window.open(destination.href, '_blank', 'noopener,noreferrer');
       });
       let navigated = false;
+      const trackUrl = (event: Event) => {
+        const value = event as Event & { url: string; isMainFrame?: boolean };
+        if (value.isMainFrame === false) return;
+        try { if (new URL(value.url).origin === new URL(url).origin) navigation.current?.(value.url); } catch {}
+      };
+      element.addEventListener('did-navigate', trackUrl, { signal: lifetime.signal });
+      element.addEventListener('did-navigate-in-page', trackUrl, { signal: lifetime.signal });
       element.addEventListener('dom-ready', () => {
         if (!navigated) {
           navigated = true;

@@ -1,3 +1,4 @@
+import {registerEditorTools} from './editor-tools.js';
 import { registerProductTools } from './product-tools.js';
 import { type Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
@@ -12,6 +13,8 @@ import { Connection, defaultCredentialsFile, serverInfo, type Config as Connecti
 import { studioRemote, type StudioConnection } from './remote.js';
 import { registerAdapterTools } from './adapter-tools.js';
 import { output, run } from './tool-output.js';
+import { PluginUpdates } from './updates.js';
+import type { UpdateNotice, UpdateSettings, UpdateStatus } from './update-contract.js';
 
 export const name = 'vishvakarma';
 export const inject = ['tools', 'skills', 'typert'];
@@ -20,16 +23,27 @@ export const Config = Schema.object({
   credentialsFile: Schema.string().default(defaultCredentialsFile).description('Абсолютный путь к приватному JSON подключения; токен не помещайте в конфигурацию DSH.'),
 });
 class StudioService extends TypertRemoteService {
-  constructor(ctx: Context, private readonly connection: Connection) { super(ctx, 'vishvakarma'); }
+  private readonly updates: PluginUpdates;
+  constructor(ctx: Context, private readonly connection: Connection, config: ConnectionConfig) { super(ctx, 'vishvakarma'); this.updates = new PluginUpdates(ctx, config); }
   @Remote
   async studio(): Promise<StudioConnection> {
     try { await serverInfo(this.connection.origin); return { url: this.connection.origin, available: true, message: '' }; }
     catch { return { url: this.connection.origin, available: false, message: 'Сервер Vishvakarma недоступен или несовместим. Запустите сервер и проверьте serverUrl.' }; }
   }
+  @Remote
+  async updateStatus(): Promise<UpdateStatus> { return this.updates.status(); }
+  @Remote
+  async updateNotice(): Promise<UpdateNotice> { return this.updates.notice(); }
+  @Remote
+  async saveUpdateSettings(settings: UpdateSettings): Promise<UpdateStatus> { return this.updates.saveSettings(settings); }
+  @Remote
+  async checkUpdate(): Promise<UpdateStatus> { return this.updates.start('check'); }
+  @Remote
+  async installUpdate(): Promise<UpdateStatus> { return this.updates.start('install'); }
 }
 export function apply(ctx: Context, config: ConnectionConfig) {
   const connection = new Connection(config);
-  new StudioService(ctx, connection);
+  new StudioService(ctx, connection, config);
   ctx.typert.remotes.register(studioRemote);
   ctx.tools.register(defineTool({
     name: 'vishvakarma_read_project', description: 'Прочитать исходный demo-проект Vishvakarma, HTML и ревизию. Доступен только владельцу установки; гости работают с доступными проектами через vishvakarma_adapter_project.',
@@ -48,6 +62,7 @@ export function apply(ctx: Context, config: ConnectionConfig) {
   }));
   registerAdapterTools(ctx, connection);
   registerProductTools(ctx, connection);
+  registerEditorTools(ctx, connection);
   const skillDir = fileURLToPath(new URL('../skills/vishvakarma/', import.meta.url));
   const skillPath = skillDir + 'SKILL.md';
   ctx.skills.registerProvider(() => ({

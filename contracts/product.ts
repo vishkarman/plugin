@@ -12,7 +12,7 @@ export interface RevisionInfo {
 }
 export interface HistoryResult { revisions: RevisionInfo[]; nextCursor: string | null; currentRevisionId: string }
 export interface RevisionContext extends AdapterProjectContext { history: RevisionInfo }
-export const Region = Type.Object({ x: Type.Number({ minimum: 0, maximum: 1 }), y: Type.Number({ minimum: 0, maximum: 1 }),
+export const Region = Type.Object({ artboardId:Type.Optional(Type.String({minLength:1,maxLength:80})),entrypoint:Type.Optional(Type.String({minLength:1,maxLength:240})), x: Type.Number({ minimum: 0, maximum: 1 }), y: Type.Number({ minimum: 0, maximum: 1 }),
   width: Type.Number({ minimum: 0, maximum: 1 }), height: Type.Number({ minimum: 0, maximum: 1 }),
   viewportWidth: Type.Integer({ minimum: 100, maximum: 4000 }), viewportHeight: Type.Integer({ minimum: 100, maximum: 4000 }),
 }, { additionalProperties: false });
@@ -36,10 +36,10 @@ export interface CommentThread {
   id: string; revisionId: string; anchor: CommentAnchor; anchorStatus: 'current' | 'changed' | 'missing';
   resolved: boolean; version: number; createdAt: string; updatedAt: string; messages: CommentMessage[];
 }
-export const ExportRequest = Type.Object({ operationId: Uuid, revisionId: Uuid, kind: Type.Union([Type.Literal('source'), Type.Literal('web')]) }, { additionalProperties: false });
+export const ExportRequest = Type.Object({ operationId: Uuid, revisionId: Uuid, kind: Type.Union([Type.Literal('source'), Type.Literal('web'), Type.Literal('png')]), artboardId:Type.Optional(Type.String({minLength:1,maxLength:80})) }, { additionalProperties: false });
 export type ExportRequestInput = Static<typeof ExportRequest>;
 export interface ExportInfo {
-  id: string; projectId: string; revisionId: string; kind: 'source' | 'web'; filename: string;
+  id: string; projectId: string; revisionId: string; kind: 'source' | 'web' | 'png'; filename: string;
   status: 'queued' | 'running' | 'ready' | 'failed' | 'cancelled'; buildId: string | null; message: string;
   downloadUrl: string | null; browserUrl: string;
 }

@@ -3,3 +3,5 @@ dist/
 *.tgz
 *.log
 .DS_Store
+.dsh-update.local.json
+.dsh-update.local.json.*.tmp

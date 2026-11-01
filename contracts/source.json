@@ -1,6 +1,6 @@
 {
   "apiVersion": "v1-prototype-1",
-  "serverVersion": "0.8.0-stage.2",
+  "serverVersion": "0.9.0-stage.3",
   "files": {
     "index.ts": {
       "source": "@vishkarman/server/contracts/index.ts",
@@ -12,7 +12,7 @@
     },
     "adapters.ts": {
       "source": "@vishkarman/server/contracts/adapters.ts",
-      "sha256": "646306872a42f68f65caec6334629d5da561539f8473d3ea01ef68d4774da211"
+      "sha256": "3f6800b850130681912d86dbf1f62fa47b92bb0ed2b90b5d7577ff9fdef05e2f"
     },
     "access.ts": {
       "source": "@vishkarman/server/contracts/access.ts",
@@ -20,7 +20,19 @@
     },
     "product.ts": {
       "source": "@vishkarman/server/contracts/product.ts",
-      "sha256": "cbba457414cebd955abdc2a0dca13906526cef95a98ab59e8517a25ec2b11f80"
+      "sha256": "f3be10f4dbc4869b132b220313745b59ebb47f66319faa12cf19a583f3d03189"
+    },
+    "editor.ts": {
+      "source": "@vishkarman/server/contracts/editor.ts",
+      "sha256": "c690c5be625e7cfd0206579f45f7c771eb6cf2d0113608e07f76b4b7d2e5891c"
+    },
+    "editor-operations.ts": {
+      "source": "@vishkarman/server/contracts/editor-operations.ts",
+      "sha256": "a3d8b2f31383aaaca725e871eb1125d793fd417617ca996c0ad6b8dbc03813c7"
+    },
+    "imports.ts": {
+      "source": "@vishkarman/server/contracts/imports.ts",
+      "sha256": "4bf88264b9fdad78b3186526fdcd6c18d509270338851382501966792d12adef"
     }
   }
 }

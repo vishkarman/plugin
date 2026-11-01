@@ -9,6 +9,8 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import { createElement as h, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { studioRemote, type StudioConnection } from './remote.js';
 import { DesktopStudio, desktopBrowser } from './studio-view.js';
+import { updateView } from './update-view.js';
+import { ToolbarButton } from './toolbar-button.js';
 
 const panelId = 'vishvakarma' as MainPanelId;
 export const inject = ['remote', 'commandUi', 'layout', 'slots'];
@@ -17,6 +19,7 @@ export async function apply(ctx: Context) {
   ctx.inject(['remote.vishvakarma'], child => registerWorkspace(child));
 }
 function registerWorkspace(ctx: Context) {
+  const UpdateButton = updateView(ctx);
   const getConnection = async () => {
     const result = await ctx.remote.vishvakarma.studio();
     if (!result.ok) throw new Error('Не удалось получить подключение Vishvakarma от DSH Host.');
@@ -57,6 +60,8 @@ function registerWorkspace(ctx: Context) {
     const [connection, setConnection] = useState<StudioConnection | null>(null);
     const [error, setError] = useState(''), [actionError, setActionError] = useState('');
     const [attempt, setAttempt] = useState(0);
+    const [besideUrl, setBesideUrl] = useState<string | null>(null);
+    const currentUrl = useRef('');
     useEffect(() => {
       if (!opened) return;
       let active = true;
@@ -70,22 +75,40 @@ function registerWorkspace(ctx: Context) {
       const sidebar = ctx.get('sidebarRight'), tabs = ctx.get('sidebarRightTabs');
       if (!sidebar || !tabs?.get('browser')) { setActionError('Включите Browser-пакет DSH, чтобы открыть Studio рядом с чатом.'); return; }
       setActionError('');
-      sidebar.openTab('browser', { params: { url: connection.url } });
+      const url = new URL(currentUrl.current || connection.url);
+      url.searchParams.delete('surface');
+      setBesideUrl(url.href);
       ctx.layout.selectPanel(null);
     }
+    useEffect(() => {
+      if (!besideUrl || bounds.visible) return;
+      setBesideUrl(null);
+      if (ctx.layout.panelInfo.getSnapshot().activePanelId !== null) return;
+      // DSH creates the current chat's sidebar store during render. Open from
+      // the following commit, after the Studio anchor has been removed.
+      const sidebar = ctx.get('sidebarRight');
+      try {
+        if (!sidebar?.mounted.getSnapshot()) throw new Error('Сначала откройте или создайте чат в DSH, затем нажмите «Открыть Studio рядом с чатом».');
+        sidebar.openTab('browser', { params: { url: besideUrl } });
+      } catch (reason) {
+        setActionError(reason instanceof Error && !sidebar?.mounted.getSnapshot() ? reason.message : 'Не удалось открыть Studio рядом с чатом. Откройте чат и повторите действие.');
+        ctx.layout.selectPanel(panelId);
+      }
+    }, [besideUrl, bounds.visible]);
     const sameSite = connection && new URL(connection.url).hostname === window.location.hostname;
     const desktop = desktopBrowser();
     return h('section', { style: { position: 'fixed', left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, pointerEvents: 'auto', minHeight: 0, display: bounds.visible ? 'flex' : 'none', flexDirection: 'column', background: 'var(--dsw-alias-bg-base, #faf9f6)' } },
       h('header', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid #8883' } },
         h('strong', null, 'Vishvakarma'),
         h('span', { style: { flex: 1 } }),
-        h('button', { type: 'button', onClick: besideChat, disabled: !connection }, 'Рядом с чатом'),
-        h('button', { type: 'button', onClick: () => ctx.layout.selectPanel(null) }, 'К чату')),
+        h(UpdateButton, { active: bounds.visible, compact: true }),
+        h(ToolbarButton, { icon: 'beside', label: 'Открыть Studio рядом с чатом', onClick: besideChat, disabled: !connection }),
+        h(ToolbarButton, { icon: 'chat', label: 'Вернуться к чату', onClick: () => ctx.layout.selectPanel(null) })),
       actionError ? h('p', { role: 'alert', style: { margin: 0, padding: '8px 16px' } }, actionError) : null,
       error ? h('div', { role: 'alert', style: { padding: 24 } }, h('p', null, error),
         h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить'))
       : !connection ? h('p', { style: { padding: 24 } }, 'Подключаем Studio…')
-      : desktop ? h(DesktopStudio, { url: connection.url, bridge: desktop })
+      : desktop ? h(DesktopStudio, { url: connection.url, bridge: desktop, onNavigate: url => { currentUrl.current = url; } })
       : !sameSite ? h('div', { style: { padding: 24 } },
         h('p', null, 'Адрес Studio и DSH используют разные локальные имена. Для браузерной сессии откройте Studio рядом с чатом либо настройте одинаковое имя (например, 127.0.0.1).'),
         h('button', { type: 'button', onClick: besideChat }, 'Открыть рядом с чатом'))
