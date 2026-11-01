@@ -1,0 +1,14 @@
+.vishvakarma-plugin-ui {
+  --vkp-background: var(--dsw-alias-bg-base, Canvas);
+  --vkp-foreground: var(--dsw-alias-label-primary, CanvasText);
+  --vkp-border: var(--dsw-alias-border-l1, GrayText);
+  --vkp-primary: var(--dsw-alias-label-primary, CanvasText);
+  --vkp-primary-foreground: var(--dsw-alias-bg-base, Canvas);
+  --vkp-accent: color-mix(in srgb, var(--vkp-foreground) 8%, var(--vkp-background));
+  --vkp-ring: var(--dsw-alias-label-primary, Highlight);
+  --vkp-update: #287cff;
+  color: var(--vkp-foreground);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}

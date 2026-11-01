@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { buildUiCss } from './build-ui.mjs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 const provenance = JSON.parse(await readFile('contracts/source.json', 'utf8'));
@@ -8,5 +9,6 @@ for (const [file, source] of Object.entries(provenance.files)) {
 }
 await mkdir('dist', { recursive: true });
 await build({ entryPoints: ['src/host.ts', 'src/connect.ts'], outdir: 'dist', bundle: true, platform: 'node', format: 'esm', target: 'node24', external: ['@deepseek-ai/*'], banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" }, sourcemap: true });
-const client = await build({ entryPoints: ['src/client.ts'], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', external: ['@deepseek-ai/*', 'react', 'react/jsx-runtime'], write: false });
+const client = await build({ entryPoints: ['src/client.ts'], bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', external: ['@deepseek-ai/*', 'react', 'react/*', 'react-dom', 'react-dom/*'], define: { __VISHVAKARMA_CSS__: JSON.stringify(await buildUiCss()) }, write: false });
+if (client.outputFiles.length !== 1) throw new Error('Client must be one self-contained JS artifact; embed CSS instead of silently dropping build outputs.');
 await writeFile('dist/client.js', 'window.__ModuleLoader__.load({id:"@vishkarman/plugin",factory:(require)=>{var module={exports:{}};var exports=module.exports;\n' + client.outputFiles[0].text + '\nreturn module.exports;}});\n');

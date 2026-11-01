@@ -11,11 +11,15 @@ import { studioRemote, type StudioConnection } from './remote.js';
 import { DesktopStudio, desktopBrowser, type StudioControls } from './studio-view.js';
 import { updateView } from './update-view.js';
 import { ToolbarButton } from './toolbar-button.js';
+import { Button } from './ui/button.js';
+import { Alert } from './ui/alert.js';
+import { installStyles } from './ui/styles.js';
 import { ReloadStudioDialog } from './reload-view.js';
 
 const panelId = 'vishvakarma' as MainPanelId;
 export const inject = ['remote', 'commandUi', 'layout', 'slots'];
 export async function apply(ctx: Context) {
+  ctx.effect(() => installStyles());
   await ctx.remote.$mount(studioRemote);
   ctx.inject(['remote.vishvakarma'], child => registerWorkspace(child));
 }
@@ -107,8 +111,8 @@ function registerWorkspace(ctx: Context) {
         studio.current.reload();
       } catch (reason) { setActionError(reason instanceof Error ? reason.message : 'Не удалось перезагрузить Studio. Повторите действие.'); }
     }
-    return h('section', { style: { position: 'fixed', left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, pointerEvents: 'auto', minHeight: 0, display: bounds.visible ? 'flex' : 'none', flexDirection: 'column', background: 'var(--dsw-alias-bg-base, #faf9f6)' } },
-      h('header', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid #8883' } },
+    return h('section', { className: 'vishvakarma-plugin-ui', style: { position: 'fixed', left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, pointerEvents: 'auto', minHeight: 0, display: bounds.visible ? 'flex' : 'none', flexDirection: 'column', background: 'var(--vkp-background)' } },
+      h('header', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--vkp-border)' } },
         h('strong', null, 'Vishvakarma'),
         h('span', { style: { flex: 1 } }),
         h(UpdateButton, { active: bounds.visible, compact: true }),
@@ -116,14 +120,14 @@ function registerWorkspace(ctx: Context) {
         h(ToolbarButton, { icon: 'beside', label: 'Открыть Studio рядом с чатом', onClick: besideChat, disabled: !connection }),
         h(ToolbarButton, { icon: 'close', label: 'Закрыть Studio и вернуться к чату', onClick: () => ctx.layout.selectPanel(null) })),
       confirmReload ? h(ReloadStudioDialog, { cancel: () => setConfirmReload(false), reload: reloadStudio, disabled: studioLoading }) : null,
-      actionError ? h('p', { role: 'alert', style: { margin: 0, padding: '8px 16px' } }, actionError) : null,
-      error ? h('div', { role: 'alert', style: { padding: 24 } }, h('p', null, error),
-        h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить'))
+      actionError ? h(Alert, { className: 'vkp:m-2' }, actionError) : null,
+      error ? h(Alert, { className: 'vkp:m-4 vkp:space-y-3' }, h('p', null, error),
+        h(Button, { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить'))
       : !connection ? h('p', { style: { padding: 24 } }, 'Подключаем Studio…')
       : desktop ? h(DesktopStudio, { ref: studio, url: connection.url, bridge: desktop, onNavigate: url => { currentUrl.current = url; }, onLoadingChange: setStudioLoading })
       : !sameSite ? h('div', { style: { padding: 24 } },
         h('p', null, 'Адрес Studio и DSH используют разные локальные имена. Для браузерной сессии откройте Studio рядом с чатом либо настройте одинаковое имя (например, 127.0.0.1).'),
-        h('button', { type: 'button', onClick: besideChat }, 'Открыть рядом с чатом'))
+        h(Button, { type: 'button', onClick: besideChat }, 'Открыть рядом с чатом'))
       : h('iframe', { title: 'Vishvakarma Studio', src: connection.url, style: { width: '100%', flex: 1, minHeight: 0, border: 0 }, allow: 'clipboard-write' }));
   }
 }

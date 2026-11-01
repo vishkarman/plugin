@@ -1,6 +1,9 @@
 import { createElement as h, forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { DesktopBrowserBridge, DesktopBrowserReservation } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types';
 
+import { Button } from './ui/button.js';
+import { Alert } from './ui/alert.js';
+
 // Public Desktop browser bridge; the shell owns the guest's sandbox and cookies.
 export function desktopBrowser(): DesktopBrowserBridge | undefined {
   const carrier = (globalThis as typeof globalThis & {
@@ -111,7 +114,7 @@ export const DesktopStudio = forwardRef<StudioControls, DesktopStudioProps>(func
 
   return h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } },
     loading ? h('p', { role: 'status', style: { margin: 0, padding: '8px 16px' } }, 'Открываем Studio…') : null,
-    error ? h('div', { role: 'alert', style: { padding: '8px 16px' } }, h('p', null, error),
-      h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить')) : null,
+    error ? h(Alert, { className: 'vkp:m-2 vkp:space-y-3' }, h('p', null, error),
+      h(Button, { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить')) : null,
     h('div', { ref: host, style: { display: 'flex', flex: 1, minWidth: 0, minHeight: 0 } }));
 });

@@ -1,0 +1,25 @@
+@import 'tailwindcss/theme.css' prefix(vkp);
+@import 'tailwindcss/utilities.css' prefix(vkp) source(none);
+@import './theme.css';
+@source '../';
+@theme inline {
+  --color-background: var(--vkp-background);
+  --color-foreground: var(--vkp-foreground);
+  --color-border: var(--vkp-border);
+  --color-primary: var(--vkp-primary);
+  --color-primary-foreground: var(--vkp-primary-foreground);
+  --color-accent: var(--vkp-accent);
+  --color-ring: var(--vkp-ring);
+}
+/* Local element defaults replace Preflight, which must never affect DSH. */
+.vishvakarma-plugin-ui, .vishvakarma-plugin-ui * { box-sizing: border-box; }
+.vishvakarma-plugin-ui :where(button, input) { font: inherit; margin: 0; border-style: solid; }
+.vishvakarma-plugin-ui :where(button) { appearance: none; }
+.vishvakarma-plugin-ui :where(h2, p) { margin: 0; }
+.vishvakarma-plugin-ui p + p { margin-top: 8px; }
+.vishvakarma-plugin-ui svg { display: block; flex-shrink: 0; }
+.vishvakarma-plugin-ui summary { cursor: pointer; }
+.vishvakarma-plugin-ui.vkp-host-dialog { width: min(600px, 90vw); max-height: 85vh; overflow: auto; margin: auto; padding: 24px; border: 1px solid var(--vkp-border); border-radius: 12px; color: var(--vkp-foreground); background: var(--vkp-background); }
+.vishvakarma-plugin-ui.vkp-host-dialog-compact { width: min(440px, 85vw); }
+.vishvakarma-plugin-ui.vkp-host-dialog::backdrop { background: #0005; }
+.vishvakarma-plugin-ui .vkp-update-badge { position: absolute; top: 1px; right: 1px; width: 8px; height: 8px; border-radius: 50%; background: var(--vkp-update); box-shadow: 0 0 0 2px var(--vkp-background); }

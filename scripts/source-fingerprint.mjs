@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 // Shared by packaging and the lightweight update indicator. No builds, imports
 // from the source checkout, network requests or dependency traversal.
-export const inputs = ['package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'cordis.patch.yml', 'README.md', 'src', 'contracts', 'skills', 'scripts'];
+export const inputs = ['package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'components.json', 'cordis.patch.yml', 'README.md', 'src', 'contracts', 'skills', 'scripts'];
 export async function sourceFingerprint(root) {
   const hash = createHash('sha256');
   async function visit(relative) {
