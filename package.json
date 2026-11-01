@@ -1,6 +1,6 @@
 {
   "name": "@vishkarman/plugin",
-  "version": "0.9.2-stage.3",
+  "version": "0.9.3-stage.3",
   "description": "Vishvakarma design workspace, project tools and source adapters for DSH",
   "type": "module",
   "packageManager": "pnpm@10.11.1",

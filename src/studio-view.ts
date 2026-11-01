@@ -1,4 +1,4 @@
-import { createElement as h, useEffect, useRef, useState } from 'react';
+import { createElement as h, forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { DesktopBrowserBridge, DesktopBrowserReservation } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types';
 
 // Public Desktop browser bridge; the shell owns the guest's sandbox and cookies.
@@ -11,15 +11,32 @@ export function desktopBrowser(): DesktopBrowserBridge | undefined {
 
 interface StudioGuest extends HTMLElement {
   loadURL(url: string): Promise<void>;
+  reload(): void;
 }
 
-export function DesktopStudio({ url, bridge, onNavigate }: { url: string; bridge: DesktopBrowserBridge; onNavigate?: (url: string) => void }) {
+export interface StudioControls { reload(): void }
+interface DesktopStudioProps {
+  url: string; bridge: DesktopBrowserBridge; onNavigate?: (url: string) => void;
+  onLoadingChange?: (loading: boolean) => void;
+}
+export const DesktopStudio = forwardRef<StudioControls, DesktopStudioProps>(function DesktopStudio({ url, bridge, onNavigate, onLoadingChange }, ref) {
   const host = useRef<HTMLDivElement>(null);
+  const page = useRef<StudioGuest | null>(null);
   const navigation = useRef(onNavigate);
   navigation.current = onNavigate;
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
+  useImperativeHandle(ref, () => ({
+    reload() {
+      if (!page.current || loading) throw new Error('Studio ещё не готова к перезагрузке.');
+      setError('');
+      // Reload the existing guest: keep its current project URL, browser login,
+      // sessionStorage and DSH lease. Loading events also cover cancelled unloads.
+      page.current.reload();
+    },
+  }), [loading]);
   useEffect(() => {
     const container = host.current!;
     const lifetime = new AbortController();
@@ -29,6 +46,7 @@ export function DesktopStudio({ url, bridge, onNavigate }: { url: string; bridge
     setError(''); setLoading(true);
     const release = () => {
       unsubscribe?.(); unsubscribe = undefined;
+      if (page.current === guest) page.current = null;
       guest?.remove(); guest = undefined;
       const owned = reservation; reservation = undefined;
       if (owned) void bridge.release(owned.lease).catch(() => {
@@ -48,6 +66,7 @@ export function DesktopStudio({ url, bridge, onNavigate }: { url: string; bridge
       reservation = acquired;
       const element = document.createElement('webview') as StudioGuest;
       guest = element;
+      page.current = element;
       element.setAttribute('aria-label', 'Vishvakarma Studio');
       element.setAttribute('name', acquired.lease);
       element.setAttribute('partition', acquired.partition);
@@ -62,6 +81,7 @@ export function DesktopStudio({ url, bridge, onNavigate }: { url: string; bridge
           window.open(destination.href, '_blank', 'noopener,noreferrer');
       });
       let navigated = false;
+      let ready = false;
       const trackUrl = (event: Event) => {
         const value = event as Event & { url: string; isMainFrame?: boolean };
         if (value.isMainFrame === false) return;
@@ -74,8 +94,10 @@ export function DesktopStudio({ url, bridge, onNavigate }: { url: string; bridge
           navigated = true;
           const studioUrl=new URL(url);studioUrl.searchParams.set('surface','dsh-desktop');
           void element.loadURL(studioUrl.href).catch(failed);
-        } else { setLoading(false); setError(''); }
+        } else { ready = true; setLoading(false); setError(''); }
       }, { signal: lifetime.signal });
+      element.addEventListener('did-start-loading', () => { setLoading(true); }, { signal: lifetime.signal });
+      element.addEventListener('did-stop-loading', () => { if (ready) setLoading(false); }, { signal: lifetime.signal });
       element.addEventListener('did-fail-load', event => {
         const failure = event as Event & { isMainFrame?: boolean; errorCode?: number };
         if (failure.isMainFrame && failure.errorCode !== -3) failed();
@@ -92,4 +114,4 @@ export function DesktopStudio({ url, bridge, onNavigate }: { url: string; bridge
     error ? h('div', { role: 'alert', style: { padding: '8px 16px' } }, h('p', null, error),
       h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить')) : null,
     h('div', { ref: host, style: { display: 'flex', flex: 1, minWidth: 0, minHeight: 0 } }));
-}
+});

@@ -8,9 +8,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar-browser/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import { createElement as h, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { studioRemote, type StudioConnection } from './remote.js';
-import { DesktopStudio, desktopBrowser } from './studio-view.js';
+import { DesktopStudio, desktopBrowser, type StudioControls } from './studio-view.js';
 import { updateView } from './update-view.js';
 import { ToolbarButton } from './toolbar-button.js';
+import { ReloadStudioDialog } from './reload-view.js';
 
 const panelId = 'vishvakarma' as MainPanelId;
 export const inject = ['remote', 'commandUi', 'layout', 'slots'];
@@ -62,6 +63,8 @@ function registerWorkspace(ctx: Context) {
     const [attempt, setAttempt] = useState(0);
     const [besideUrl, setBesideUrl] = useState<string | null>(null);
     const currentUrl = useRef('');
+    const studio = useRef<StudioControls>(null);
+    const [studioLoading, setStudioLoading] = useState(true), [confirmReload, setConfirmReload] = useState(false);
     useEffect(() => {
       if (!opened) return;
       let active = true;
@@ -97,18 +100,27 @@ function registerWorkspace(ctx: Context) {
     }, [besideUrl, bounds.visible]);
     const sameSite = connection && new URL(connection.url).hostname === window.location.hostname;
     const desktop = desktopBrowser();
+    function reloadStudio() {
+      setConfirmReload(false); setActionError('');
+      try {
+        if (!studio.current) throw new Error('Studio недоступна для перезагрузки.');
+        studio.current.reload();
+      } catch (reason) { setActionError(reason instanceof Error ? reason.message : 'Не удалось перезагрузить Studio. Повторите действие.'); }
+    }
     return h('section', { style: { position: 'fixed', left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, pointerEvents: 'auto', minHeight: 0, display: bounds.visible ? 'flex' : 'none', flexDirection: 'column', background: 'var(--dsw-alias-bg-base, #faf9f6)' } },
       h('header', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid #8883' } },
         h('strong', null, 'Vishvakarma'),
         h('span', { style: { flex: 1 } }),
         h(UpdateButton, { active: bounds.visible, compact: true }),
+        desktop ? h(ToolbarButton, { icon: 'reload', label: 'Перезагрузить Studio', onClick: () => setConfirmReload(true), disabled: !connection || studioLoading }) : null,
         h(ToolbarButton, { icon: 'beside', label: 'Открыть Studio рядом с чатом', onClick: besideChat, disabled: !connection }),
         h(ToolbarButton, { icon: 'close', label: 'Закрыть Studio и вернуться к чату', onClick: () => ctx.layout.selectPanel(null) })),
+      confirmReload ? h(ReloadStudioDialog, { cancel: () => setConfirmReload(false), reload: reloadStudio, disabled: studioLoading }) : null,
       actionError ? h('p', { role: 'alert', style: { margin: 0, padding: '8px 16px' } }, actionError) : null,
       error ? h('div', { role: 'alert', style: { padding: 24 } }, h('p', null, error),
         h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить'))
       : !connection ? h('p', { style: { padding: 24 } }, 'Подключаем Studio…')
-      : desktop ? h(DesktopStudio, { url: connection.url, bridge: desktop, onNavigate: url => { currentUrl.current = url; } })
+      : desktop ? h(DesktopStudio, { ref: studio, url: connection.url, bridge: desktop, onNavigate: url => { currentUrl.current = url; }, onLoadingChange: setStudioLoading })
       : !sameSite ? h('div', { style: { padding: 24 } },
         h('p', null, 'Адрес Studio и DSH используют разные локальные имена. Для браузерной сессии откройте Studio рядом с чатом либо настройте одинаковое имя (например, 127.0.0.1).'),
         h('button', { type: 'button', onClick: besideChat }, 'Открыть рядом с чатом'))

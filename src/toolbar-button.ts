@@ -1,8 +1,9 @@
 import { createElement as h, type ButtonHTMLAttributes } from 'react';
 
-type Icon = 'update' | 'beside' | 'close';
+type Icon = 'update' | 'reload' | 'beside' | 'close';
 const paths: Record<Icon, string> = {
   update: 'M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3a7 7 0 0 0 11.6-1',
+  reload: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5',
   beside: 'M3 4h18v16H3zM12 4v16M6 8h3M6 12h3M15 8h3M15 12h3',
   close: 'M6 6l12 12M18 6 6 18',
 };
