@@ -69,7 +69,7 @@ export function registerAdapterTools(ctx: Context, connection: Connection) {
   }));
   ctx.tools.register(defineTool({
     name: 'vishvakarma_asset',
-    description: 'Сохранить ресурс проекта (изображение, шрифт, 3D-файл) как base64 либо удалить contentBase64:null. Для нового ресурса expectedHash:null, для замены/удаления SHA-256 из assets прочитанной ревизии. Обычно пользователь загружает большие файлы в Studio; агент читает assets и использует относительный path в исходниках. Не помещайте сюда секреты, внешние URL и содержимое случайных локальных файлов. Нужен canUseAgent=true. После сохранения перечитайте проект и соберите новую ревизию.',
+    description: 'Сохранить ресурс проекта (изображение, шрифт, 3D-файл) как base64 либо удалить contentBase64:null. Для нового ресурса expectedHash:null, для замены/удаления SHA-256 из assets прочитанной ревизии. Обычно пользователь загружает большие файлы в Studio; агент читает assets и использует относительный path в исходниках. Не помещайте сюда секреты, внешние URL и содержимое случайных локальных файлов. Нужен canUseAgent=true. После сохранения перечитайте проект и вызовите vishvakarma_preview.',
     parameters: {
       projectId: project, baseRevisionId: baseRevision, operationId,
       path: { type: 'string', required: true, description: 'Относительный путь, например assets/cover.png' },
@@ -80,8 +80,17 @@ export function registerAdapterTools(ctx: Context, connection: Connection) {
     execute: async ({ projectId, ...input }, exec) => run(() => connection.asset(projectId, input, exec.signal)),
   }));
   ctx.tools.register(defineTool({
+    name:'vishvakarma_preview',
+    description:'ensure разрешает live preview сохранённого проекта и требует canUseAgent; если head успел измениться, ответ относится к актуальной revisionId. read читает статус. ready означает, что runtime применил вход; это не подтверждение видимого iframe или проверенного исполнения. После сохранения используйте preview, а build — только для явной сборки/проверки.',
+    parameters:{request:{required:true,oneOf:[
+      {type:'object',additionalProperties:false,properties:{action:{type:'string',const:'ensure',required:true},projectId:project,revisionId:{type:'string',required:true}}},
+      {type:'object',additionalProperties:false,properties:{action:{type:'string',const:'read',required:true},projectId:project}},
+    ]}},output,isConcurrencySafe:args=>args.request.action==='read',
+    execute:async({request},exec)=>run(()=>connection.preview(request.projectId,request.action,request.action==='ensure'?request.revisionId:undefined,exec.signal)),
+  }));
+  ctx.tools.register(defineTool({
     name: 'vishvakarma_build',
-    description: 'start ставит сохранённую ревизию в очередь Runner, требует access.canUseAgent=true и возвращает id. status читает доступную сборку, включая diagnostics. queued/running не означают готовый просмотр; сообщайте об успехе сборки только при succeeded. При отказе в правах остановитесь.',
+    description: 'Явная production-сборка и проверка исполнения со screenshot; не вызывайте автоматически после каждой правки. start ставит сохранённую ревизию в очередь Runner, требует access.canUseAgent=true и возвращает id. status читает доступную сборку, включая diagnostics. queued/running не означают готовый просмотр; сообщайте об успехе сборки только при succeeded. При отказе в правах остановитесь.',
     parameters: { request: { required: true, oneOf: [
       { type: 'object', additionalProperties: false, properties: {
         action: { type: 'string', const: 'start', required: true }, projectId: project,

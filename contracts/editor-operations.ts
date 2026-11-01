@@ -14,6 +14,10 @@ export type EditorCondition = Static<typeof WidthCondition>;
 export const EditorContextSchema = Type.Object(
   {
     artboardId: Id,
+    viewport: Type.Optional(Type.Object({
+      width: Type.Integer({minimum:100,maximum:4000}),
+      height: Type.Integer({minimum:100,maximum:4000}),
+    }, {additionalProperties:false})),
     entrypoint: Type.String({ minLength: 1, maxLength: 240 }),
     width: Type.Integer({ minimum: 1, maximum: 10000 }),
     height: Type.Integer({ minimum: 1, maximum: 10000 }),

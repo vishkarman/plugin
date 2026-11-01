@@ -1,6 +1,6 @@
 {
   "apiVersion": "v1-prototype-1",
-  "serverVersion": "0.9.0-stage.3",
+  "serverVersion": "0.10.0-stage.3",
   "files": {
     "index.ts": {
       "source": "@vishkarman/server/contracts/index.ts",
@@ -12,7 +12,7 @@
     },
     "adapters.ts": {
       "source": "@vishkarman/server/contracts/adapters.ts",
-      "sha256": "3f6800b850130681912d86dbf1f62fa47b92bb0ed2b90b5d7577ff9fdef05e2f"
+      "sha256": "1a78c88bf049eb0a9a6572725b3f25287845c5e859a009e8a4786ebb9af3a821"
     },
     "access.ts": {
       "source": "@vishkarman/server/contracts/access.ts",
@@ -20,19 +20,27 @@
     },
     "product.ts": {
       "source": "@vishkarman/server/contracts/product.ts",
-      "sha256": "f3be10f4dbc4869b132b220313745b59ebb47f66319faa12cf19a583f3d03189"
+      "sha256": "9a4d01c4a935c4bbeedcf946cbc0230e5d9aed42a3545aa14d31ef9bcf88c814"
     },
     "editor.ts": {
       "source": "@vishkarman/server/contracts/editor.ts",
-      "sha256": "c690c5be625e7cfd0206579f45f7c771eb6cf2d0113608e07f76b4b7d2e5891c"
+      "sha256": "4c19b7c1e7b6295fc610fa447d5538d1d912f94aa34a69a258427e14839e1547"
     },
     "editor-operations.ts": {
       "source": "@vishkarman/server/contracts/editor-operations.ts",
-      "sha256": "a3d8b2f31383aaaca725e871eb1125d793fd417617ca996c0ad6b8dbc03813c7"
+      "sha256": "0f18fa68fafb01127f283bc78e049fba2b9b9f7973de2d9cb26b516e88592873"
     },
     "imports.ts": {
       "source": "@vishkarman/server/contracts/imports.ts",
       "sha256": "4bf88264b9fdad78b3186526fdcd6c18d509270338851382501966792d12adef"
+    },
+    "collaboration.ts": {
+      "source": "@vishkarman/server/contracts/collaboration.ts",
+      "sha256": "d0bb0c5299927169fe0a56da66034d185d00ae8ac2df242669645364e00d645e"
+    },
+    "preview.ts": {
+      "source": "@vishkarman/server/contracts/preview.ts",
+      "sha256": "013bb4a8155a36a56ee34e70aa8ce2e7c0df899f77a099642ab57fd33dc0e15a"
     }
   }
 }

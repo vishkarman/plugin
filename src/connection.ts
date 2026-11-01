@@ -1,3 +1,4 @@
+import { PREVIEW_CAPABILITY, type PreviewState } from '../contracts/preview.js';
 import {FormatRegistry} from '@sinclair/typebox';
 import {Value} from '@sinclair/typebox/value';
 import {EDITOR_CAPABILITY,PNG_CAPABILITY,EditorAuthoringUpdate} from '../contracts/editor.js';
@@ -109,6 +110,7 @@ export async function serverInfo(origin: string, signal?: AbortSignal): Promise<
     throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает права проектов. Требуется access.project-roles.v1; обновите сервер до прототипа 6.');
   if (!info.capabilities.includes(WORKSPACE_CAPABILITY))
     throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает собственные проекты. Требуется workspace.projects.v1; обновите сервер до этапа 1.');
+  if (!info.capabilities.includes(PREVIEW_CAPABILITY)) throw new ConnectionError('INCOMPATIBLE','Нужен сервер с preview.live.v1. Сначала обновите сервер; автоматического перехода на сборку после каждой правки нет.');
   if (!info.capabilities.includes(PRODUCT_CAPABILITY)) throw new ConnectionError('INCOMPATIBLE','Для этой версии плагина нужен сервер этапа 2: product.history-comments-export.v1. Обновите сервер перед записью.');
   return info;
 }
@@ -254,6 +256,13 @@ export class Connection {
         id(operationId) ? operationId : undefined, id(baseRevisionId) ? { baseRevisionId } : {});
     }
   }
+  async preview(projectId:string,action:'ensure'|'read',revisionId?:string,signal?:AbortSignal):Promise<PreviewState>{
+    if(!projectKey(projectId)||(action==='ensure'&&!id(revisionId)))throw new ConnectionError('INVALID_REQUEST','Нужен проект и сохранённая ревизия для ensure.');
+    const {token}=await this.credentials(signal,PREVIEW_CAPABILITY);
+    const result=await request<PreviewState>(this.origin,'/api/v1/adapters/projects/'+projectId+'/preview',token,action==='ensure'?{revisionId}:undefined,signal);
+    if(result.projectId!==projectId||!['unprepared','waiting','updating','ready','error'].includes(result.status))throw new ConnectionError('INCOMPATIBLE','Неизвестный ответ preview.');
+    return result;
+  }
   async adapterBuild(projectId: ExampleKey, revisionId: string, signal?: AbortSignal): Promise<{ id: string }> {
     if (!projectKey(projectId) || !id(revisionId)) throw new ConnectionError('INVALID_REQUEST', 'Нужны проект и UUID сохранённой ревизии.');
     const { token } = await this.credentials(signal, ADAPTER_CAPABILITY);
@@ -310,8 +319,9 @@ export class Connection {
       const {token}=await this.credentials(signal,EDITOR_OPERATIONS_CAPABILITY);
       const query=new URLSearchParams();if(input.artboardId)query.set('artboardId',input.artboardId);if(input.targetId)query.set('targetId',input.targetId);
       const result=await request<any>(this.origin,base+'/editor-context?'+query,token,undefined,signal);
-      const state=await request<any>(this.origin,base+'/editor?revisionId='+result.revisionId,token,undefined,signal);
-      return {...result,authoring:state.authoring,sourceRequestSchema:EditorActionRequest,artboardsRequestSchema:EditorAuthoringUpdate};
+      const state=await request<any>(this.origin,base+'/editor',token,undefined,signal);
+      if(state.revisionId!==result.revisionId)throw new ConnectionError('INVALID_REQUEST','Проект изменился во время чтения. Повторите read.');
+      return {...result,authoring:state.authoring,authoringVersion:state.authoringVersion,sourceRequestSchema:EditorActionRequest,artboardsRequestSchema:EditorAuthoringUpdate};
     }
     let payload:any;try{payload=JSON.parse(input.payload);}catch{throw new ConnectionError('INVALID_REQUEST','payload должен быть JSON.');}
     const schema=input.kind==='source'?EditorActionRequest:EditorAuthoringUpdate;

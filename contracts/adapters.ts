@@ -1,3 +1,4 @@
+import type {PreviewState} from './preview.js';
 import type {EditorAuthoring} from './editor.js';
 import { Type, type Static } from '@sinclair/typebox';
 import type { ProjectAccess } from './access.js';
@@ -49,6 +50,8 @@ export interface AdapterAnalysis {
 export interface AdapterInstruction { adapterId: string; version: string; text: string }
 export interface AdapterExample { id: TemplateKey; name: string; description: string }
 export interface AdapterProjectContext {
+  livePreview?: PreviewState;
+  authoringVersion: number;
   authoring: EditorAuthoring;
   access: ProjectAccess;
   projectId: ExampleKey; name: string; revisionId: string; saved: true;

@@ -41,6 +41,7 @@ export const EditorAuthoringUpdate = Type.Object(
   {
     operationId: Type.String({ format: "uuid" }),
     baseRevisionId: Type.String({ format: "uuid" }),
+    expectedAuthoringVersion: Type.Optional(Type.Integer({ minimum: 0 })),
     authoring: EditorAuthoringSchema,
   },
   { additionalProperties: false },
@@ -49,6 +50,7 @@ export type EditorAuthoringUpdateInput = Static<typeof EditorAuthoringUpdate>;
 export interface EditorState {
   projectId: string;
   revisionId: string;
+  authoringVersion: number;
   authoring: EditorAuthoring;
 }
 export const EditorPreferencesSchema = Type.Object(

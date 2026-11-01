@@ -36,7 +36,7 @@ export interface CommentThread {
   id: string; revisionId: string; anchor: CommentAnchor; anchorStatus: 'current' | 'changed' | 'missing';
   resolved: boolean; version: number; createdAt: string; updatedAt: string; messages: CommentMessage[];
 }
-export const ExportRequest = Type.Object({ operationId: Uuid, revisionId: Uuid, kind: Type.Union([Type.Literal('source'), Type.Literal('web'), Type.Literal('png')]), artboardId:Type.Optional(Type.String({minLength:1,maxLength:80})) }, { additionalProperties: false });
+export const ExportRequest = Type.Object({ operationId: Uuid, revisionId: Uuid, kind: Type.Union([Type.Literal('source'), Type.Literal('web'), Type.Literal('png')]), artboardId:Type.Optional(Type.String({minLength:1,maxLength:80})), viewport:Type.Optional(Type.Object({width:Type.Integer({minimum:100,maximum:4000}),height:Type.Integer({minimum:100,maximum:4000})},{additionalProperties:false})) }, { additionalProperties: false });
 export type ExportRequestInput = Static<typeof ExportRequest>;
 export interface ExportInfo {
   id: string; projectId: string; revisionId: string; kind: 'source' | 'web' | 'png'; filename: string;
