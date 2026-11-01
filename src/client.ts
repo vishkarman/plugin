@@ -103,7 +103,7 @@ function registerWorkspace(ctx: Context) {
         h('span', { style: { flex: 1 } }),
         h(UpdateButton, { active: bounds.visible, compact: true }),
         h(ToolbarButton, { icon: 'beside', label: 'Открыть Studio рядом с чатом', onClick: besideChat, disabled: !connection }),
-        h(ToolbarButton, { icon: 'chat', label: 'Вернуться к чату', onClick: () => ctx.layout.selectPanel(null) })),
+        h(ToolbarButton, { icon: 'close', label: 'Закрыть Studio и вернуться к чату', onClick: () => ctx.layout.selectPanel(null) })),
       actionError ? h('p', { role: 'alert', style: { margin: 0, padding: '8px 16px' } }, actionError) : null,
       error ? h('div', { role: 'alert', style: { padding: 24 } }, h('p', null, error),
         h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить'))

@@ -58,7 +58,7 @@ export function updateView(ctx: Context) {
     const busy = pending || Boolean(status && ['checking', 'building', 'installing'].includes(status.phase));
     useEffect(() => { if (status && !busy) void refreshNotice(); }, [status?.phase, status?.settings.development, status?.settings.directory, busy]);
     const dirty = draft && status && (draft.development !== status.settings.development || draft.directory !== status.settings.directory);
-    return h('dialog', { ref: dialog, onCancel: close, 'aria-label': 'Обновление Vishvakarma', style: { width: 'min(600px, 90vw)', maxHeight: '85vh', overflow: 'auto', border: '1px solid #8886', borderRadius: 12, padding: 24, color: 'var(--dsw-alias-text-primary, #202020)', background: 'var(--dsw-alias-bg-base, #faf9f6)' } },
+    return h('dialog', { ref: dialog, onCancel: close, 'aria-label': 'Обновление Vishvakarma', style: { width: 'min(600px, 90vw)', maxHeight: '85vh', overflow: 'auto', border: '1px solid var(--dsw-alias-border-l1, GrayText)', borderRadius: 12, padding: 24, color: 'var(--dsw-alias-label-primary, CanvasText)', background: 'var(--dsw-alias-bg-base, Canvas)' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
         h('h2', { style: { margin: 0, flex: 1, fontSize: 20 } }, 'Обновление Vishvakarma'),
         h('button', { type: 'button', onClick: close, 'aria-label': 'Закрыть обновление' }, 'Закрыть')),
