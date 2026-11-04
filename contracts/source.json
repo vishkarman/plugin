@@ -16,7 +16,7 @@
     },
     "access.ts": {
       "source": "@vishkarman/server/contracts/access.ts",
-      "sha256": "ef2daa491d09eac91df5345bf52034b84d11ecf67ac0c9368befd370614691c7"
+      "sha256": "4828056ef76c6aff858b4d6152e48601ffab847c498386012589d9bd482512b7"
     },
     "product.ts": {
       "source": "@vishkarman/server/contracts/product.ts",

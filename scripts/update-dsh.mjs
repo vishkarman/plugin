@@ -177,27 +177,33 @@ async function main() {
     if (fingerprint !== await sourceFingerprint(root)) throw new Error('Исходники изменились при копировании. Повторите команду после сохранения файлов.');
     await symlink(join(root, 'node_modules'), join(stage, 'node_modules'), 'dir');
 
-    // Derive the check from the copied client/contracts, not a second version matrix.
-    const provenance = await json(join(stage, 'contracts/source.json'));
-    const modules = Object.keys(provenance.files);
-    const compatibilitySource = `export { serverInfo, originOf, defaultCredentialsFile } from './src/connection.ts';\n` +
-      modules.map((file, i) => `import * as c${i} from ${JSON.stringify('./contracts/' + file)};`).join('\n') +
-      `\nexport const capabilities = [${modules.map((_, i) => `c${i}`).join(',')}].flatMap(m => Object.entries(m).filter(([k,v]) => (k === 'CAPABILITY' || k.endsWith('_CAPABILITY')) && typeof v === 'string').map(([,v]) => v));`;
+    // Compatibility comes from the copied sources, not a second version matrix:
+    // connection.serverInfo() enforces required capabilities, and the updater
+    // uses the same registry to report them before any build starts.
+    const compatibilitySource = `export { serverInfo, originOf, defaultCredentialsFile } from './src/connection.ts';\n`
+      + `export { REQUIRED_CAPABILITIES, missingCapabilities, missingOptionalCapabilities } from './src/server-capabilities.ts';`;
     await build({ stdin: { contents: compatibilitySource, resolveDir: stage }, outfile: join(stage, 'compatibility.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node24', logLevel: 'silent' });
     const compatibility = await import(pathToFileURL(join(stage, 'compatibility.mjs')).href);
     const origin = compatibility.originOf(config.serverUrl ?? 'http://127.0.0.1:3000');
     const credentialsFile = config.credentialsFile ?? compatibility.defaultCredentialsFile;
     if (typeof credentialsFile !== 'string' || !isAbsolute(credentialsFile)) throw new Error('credentialsFile в настройках должен быть абсолютным путём.');
     preserved = await fingerprints([...patches, credentialsFile, join(target.dshHome, 'settings.yaml'), join(profileDir, 'settings.yaml')]);
+    const requiredCapabilities = [...new Set(compatibility.REQUIRED_CAPABILITIES)];
     async function compatibleServer() {
       const info = await compatibility.serverInfo(origin, AbortSignal.any([stop.signal, AbortSignal.timeout(10000)]));
-      const missing = [...new Set(compatibility.capabilities)].filter(value => !info.capabilities.includes(value));
+      // serverInfo() already rejects a missing required capability; keep the
+      // explicit registry check so --check/--prepare name the exact list first.
+      const missing = compatibility.missingCapabilities(info.capabilities);
       if (missing.length) throw new Error(`Сначала обновите сервер ${info.serverVersion}: отсутствуют возможности ${missing.join(', ')}. Установка не начата.`);
+      // Optional capabilities are allowed to be absent: the server stays usable,
+      // but the new account features are unavailable until it is updated.
+      const missingOptional = compatibility.missingOptionalCapabilities(info.capabilities);
+      if (missingOptional.length) console.log(`Сервер ${info.serverVersion} не объявляет необязательные возможности: ${missingOptional.join(', ')}. Установка разрешена; функции аккаунтов будут недоступны до обновления сервера.`);
       return info;
     }
     const info = await compatibleServer();
     console.log(`Совместимость: DSH ${dshVersion}, сервер ${info.serverVersion} (${origin}) — OK.`);
-    const candidate = { protocol: 1, profile: target.profile, dshHome: target.dshHome, sourceVersion: source.version, sourceFingerprint: fingerprint, previousVersion: current.version, dshVersion, serverVersion: info.serverVersion, apiVersion: info.apiVersion, installationId: info.installationId, origin, capabilities: [...new Set(compatibility.capabilities)], logPath };
+    const candidate = { protocol: 1, profile: target.profile, dshHome: target.dshHome, sourceVersion: source.version, sourceFingerprint: fingerprint, previousVersion: current.version, dshVersion, serverVersion: info.serverVersion, apiVersion: info.apiVersion, installationId: info.installationId, origin, capabilities: requiredCapabilities, logPath };
     if (args.check) {
       if (args['result-file']) await atomicJson(args['result-file'], candidate);
       console.log('Проверка завершена. Профиль и сохранённый выбор не изменены.'); return;

@@ -1,7 +1,18 @@
 import { Type, type Static } from '@sinclair/typebox';
 
 export const ACCESS_CAPABILITY = 'access.project-roles.v1';
-export interface AuthUser { id: string; username: string; isOwner: boolean }
+/** New plugin and Studio use the account workspace; the capability is optional for old servers. */
+export const ACCOUNT_CAPABILITY = 'account.workspace.v1';
+
+export type AccountRole = 'user' | 'admin';
+export type AccountStatus = 'active' | 'blocked';
+
+export interface AuthUser {
+  id: string; username: string; displayName: string;
+  role: AccountRole; canCreateProjects: boolean;
+  /** Legacy marker of the original installation account, kept for old clients only. */
+  isOwner: boolean;
+}
 export interface ProjectAccess {
   role: 'owner' | 'viewer' | 'commenter' | 'editor'; canEdit: boolean; canComment: boolean; canManage: boolean; canUseAgent: boolean;
 }

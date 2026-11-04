@@ -11,7 +11,8 @@ import { randomUUID } from 'node:crypto';
 import { API_VERSION, CAPABILITY, type ServerInfo, type ProjectContext, type SavedChange, type ChangeInput } from '../contracts/index.js';
 import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, WORKSPACE_CAPABILITY, type ProjectCreateInput, type ProjectUpdateInput, type AssetUploadInput, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type AdapterChangeCheck, type ChangeConflict, type SourcePathName, type ExampleKey } from '../contracts/adapters.js';
 import type { BuildInfo } from '../contracts/runner.js';
-import { ACCESS_CAPABILITY, type AuthUser, type ProjectAccess } from '../contracts/access.js';
+import { ACCOUNT_CAPABILITY, type AuthUser, type ProjectAccess } from '../contracts/access.js';
+import { missingCapabilities } from './server-capabilities.js';
 
 FormatRegistry.Set('uuid',value=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 export const defaultCredentialsFile = join(homedir(), 'Library/Application Support/Vishvakarma/dev/config/plugin-credentials.json');
@@ -104,26 +105,29 @@ export async function request<T>(origin: string, path: string, token?: string, b
 }
 export async function serverInfo(origin: string, signal?: AbortSignal): Promise<ServerInfo> {
   const info = await request<ServerInfo>(origin, '/api/v1/server', undefined, undefined, signal);
-  if (info.apiVersion !== API_VERSION || !id(info.installationId) || !info.capabilities?.includes(CAPABILITY))
+  if (info.apiVersion !== API_VERSION || !id(info.installationId) || !Array.isArray(info.capabilities))
     throw new ConnectionError('INCOMPATIBLE', 'Установка не поддерживает API этого прототипа.');
-  if (!info.capabilities.includes(ACCESS_CAPABILITY))
-    throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает права проектов. Требуется access.project-roles.v1; обновите сервер до прототипа 6.');
-  if (!info.capabilities.includes(WORKSPACE_CAPABILITY))
-    throw new ConnectionError('INCOMPATIBLE', 'Сервер не поддерживает собственные проекты. Требуется workspace.projects.v1; обновите сервер до этапа 1.');
-  if (!info.capabilities.includes(PREVIEW_CAPABILITY)) throw new ConnectionError('INCOMPATIBLE','Нужен сервер с preview.live.v1. Сначала обновите сервер; автоматического перехода на сборку после каждой правки нет.');
-  if (!info.capabilities.includes(PRODUCT_CAPABILITY)) throw new ConnectionError('INCOMPATIBLE','Для этой версии плагина нужен сервер этапа 2: product.history-comments-export.v1. Обновите сервер перед записью.');
+  const missing = missingCapabilities(info.capabilities);
+  if (missing.length)
+    throw new ConnectionError('INCOMPATIBLE', `Сервер несовместим с этой версией плагина: отсутствуют обязательные возможности ${missing.join(', ')}. Обновите сервер.`);
   return info;
 }
-export async function currentUser(origin: string, token: string, signal?: AbortSignal): Promise<AuthUser> {
+export async function currentUser(origin: string, token: string, capabilities: readonly string[], signal?: AbortSignal): Promise<AuthUser> {
   const result = await request<{ user: AuthUser }>(origin, '/api/v1/auth/me', token, undefined, signal);
-  if (!result?.user || !id(result.user.id) || typeof result.user.username !== 'string' || typeof result.user.isOwner !== 'boolean')
+  const user = result?.user;
+  if (!user || !id(user.id) || typeof user.username !== 'string' || typeof user.isOwner !== 'boolean')
     throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемую учётную запись.');
-  return result.user;
+  // account.workspace.v1 promises the full account model: a partial answer means
+  // the server is inconsistent, not a reason to silently fall back to isOwner.
+  if (capabilities.includes(ACCOUNT_CAPABILITY)
+    && (!['user', 'admin'].includes(user.role) || typeof user.canCreateProjects !== 'boolean' || typeof user.displayName !== 'string'))
+    throw new ConnectionError('INCOMPATIBLE', 'Сервер объявил account.workspace.v1, но вернул неполную учётную запись: нужны displayName, role и canCreateProjects. Обновите сервер.');
+  return user;
 }
 export class Connection {
   readonly origin: string;
   constructor(readonly config: Config) { this.origin = originOf(config.serverUrl); }
-  async credentials(signal?: AbortSignal, capability?: string): Promise<Credentials> {
+  async credentials(signal?: AbortSignal, capability?: string): Promise<Credentials & { capabilities: string[] }> {
     const credentials = await privateJson(this.config.credentialsFile) as Partial<Credentials>;
     // Check the origin before any credential-bearing request, then bind the installation.
     if (credentials.origin !== this.origin) throw new ConnectionError('RECONNECT_REQUIRED', 'Адрес изменился. Для выбранной установки требуется новое подключение.');
@@ -135,7 +139,7 @@ export class Connection {
       throw new ConnectionError('INCOMPATIBLE', capability === ADAPTER_REBASE_CAPABILITY
         ? 'Сервер не поддерживает проверку параллельных правок. Требуется adapters.checked-rebase.v1; обновите сервер до прототипа 5.'
         : 'Сервер не поддерживает адаптеры исходников. Требуется adapters.source-editing.v1.');
-    return credentials as Credentials;
+    return { ...(credentials as Credentials), capabilities: [...info.capabilities] };
   }
   async read(signal?: AbortSignal): Promise<ProjectContext> {
     const { token } = await this.credentials(signal);
@@ -160,13 +164,16 @@ export class Connection {
     }
   }
   async adapterExamples(signal?: AbortSignal): Promise<{ projects: { id: string; name: string; description: string; access: ProjectAccess }[]; templates: AdapterExample[]; canCreate: boolean }> {
-    const { token } = await this.credentials(signal, WORKSPACE_CAPABILITY);
-    const user = await currentUser(this.origin, token, signal);
+    const { token, capabilities } = await this.credentials(signal, WORKSPACE_CAPABILITY);
+    const account = capabilities.includes(ACCOUNT_CAPABILITY);
+    const user = await currentUser(this.origin, token, capabilities, signal);
     const result = await request<{ projects: { id: string; name: string; description: string; access: ProjectAccess }[] }>(this.origin, '/api/v1/adapters/projects', token, undefined, signal);
     if (!Array.isArray(result.projects) || result.projects.some(project => !validProject(project) || !validAccess(project.access)))
       throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый список проектов.');
-    const templates = user.isOwner ? await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal) : { examples: [] };
-    return { projects: result.projects, templates: templates.examples, canCreate: user.isOwner };
+    // The account model opens templates to every active user; the old server keeps the legacy owner rule.
+    // An account server that omits account.workspace.v1-consistent fields is rejected in currentUser().
+    const templates = account || user.isOwner ? await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal) : { examples: [] };
+    return { projects: result.projects, templates: templates.examples, canCreate: account ? user.canCreateProjects : user.isOwner };
   }
   async adapterProject(projectId: ExampleKey, _open: boolean, targetId?: string, signal?: AbortSignal): Promise<AdapterProjectContext & { studioUrl: string }> {
     if (!projectKey(projectId) || (targetId !== undefined && (!targetId || targetId.length > 256)))
