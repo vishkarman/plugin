@@ -112,8 +112,8 @@ export const DesktopStudio = forwardRef<StudioControls, DesktopStudioProps>(func
     return () => { lifetime.abort(); release(); };
   }, [url, bridge, attempt]);
 
-  return h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } },
-    loading ? h('p', { role: 'status', style: { margin: 0, padding: '8px 16px' } }, 'Открываем Studio…') : null,
+  // Loading must not resize the guest: its page already owns loading placeholders.
+  return h('div', { 'aria-busy': loading, style: { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } },
     error ? h(Alert, { className: 'vkp:m-2 vkp:space-y-3' }, h('p', null, error),
       h(Button, { type: 'button', onClick: () => setAttempt(value => value + 1) }, 'Повторить')) : null,
     h('div', { ref: host, style: { display: 'flex', flex: 1, minWidth: 0, minHeight: 0 } }));
