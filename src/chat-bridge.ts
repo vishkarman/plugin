@@ -156,11 +156,43 @@ export class ChatBridge {
     });
   }
 
+  /** Feature-detect the live agent cancellation surface across DSH builds. */
+  private async stopAgent(sessionId: string) {
+    try {
+      const controller = this.ctx.get('sessionController') as any;
+      const found = await controller?.resolveAgent?.(sessionId);
+      const agent = found && !('error' in found) ? found.agent : null;
+      const names = ['interrupt', 'abort', 'cancelTurn', 'abortTurn', 'interruptTurn', 'stopTurn', 'cancel', 'stop'];
+      for (const target of [agent, agent?.session]) {
+        if (!target) continue;
+        for (const method of names) {
+          if (typeof target[method] !== 'function') continue;
+          try { await Promise.resolve(target[method]()); return true; } catch { /* try the next surface */ }
+        }
+      }
+      for (const method of ['cancel', 'interrupt', 'cancelTurn', 'abort', 'stop']) {
+        if (typeof controller?.[method] !== 'function') continue;
+        try { await Promise.resolve(controller[method]({ sessionId })); return true; } catch { /* try the next surface */ }
+      }
+      this.ctx.logger?.warn?.('vishvakarma chat: не найден способ остановить агента в этой сборке DSH');
+      return false;
+    } catch (error) {
+      this.ctx.logger?.warn?.('vishvakarma chat: остановка агента не удалась: ' + String(error));
+      return false;
+    }
+  }
+
   private async beatActive() {
     if (this.stopped) return;
     const agents = this.ctx.get('agents') as any;
     for (const work of this.active.values()) {
       try {
+        const current = await this.connection.chatRequestStatus(work.requestId).catch(() => ({ status: null }));
+        if (current.status === 'cancelled') {
+          await this.stopAgent(work.sessionId);
+          this.active.delete(work.requestId);
+          continue;
+        }
         if (Date.now() - work.lastBeat >= BEAT_MS) {
           await this.connection.chatWorking(work.requestId, work.leaseToken, work.sessionId);
           work.lastBeat = Date.now();
