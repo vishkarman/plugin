@@ -30,6 +30,7 @@ export class ChatBridge {
   private readonly stateFile: string;
   private bindings: Record<string, string> = {};
   private readonly active = new Map<string, ActiveWork>();
+  private readonly sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps: number; toolCalls: number; seen: number }>();
   private instanceId = '';
   private accountId = '';
   private busy = false;
@@ -40,6 +41,31 @@ export class ChatBridge {
     this.stateDir = join(dirname(credentialsFile), 'chat');
     this.stateFile = join(this.stateDir, 'instance.json');
     this.bindingFile = join(this.stateDir, 'sessions.json');
+    (this.ctx as any).on?.('session/event', (session: any) => this.trackSessionUsage(session));
+  }
+
+  /** Accumulate provider usage for every session, including subagents spawned by a project turn. */
+  private trackSessionUsage(session: any) {
+    try {
+      const raw = String(session?.id ?? session?.sessionId ?? '');
+      if (!raw) return;
+      const key = raw.replace(/^session-/, '');
+      const events = session?.snapshotEvents?.() ?? [];
+      let state = this.sessionUsage.get(key);
+      if (!state) { state = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, steps: 0, toolCalls: 0, seen: 0 }; this.sessionUsage.set(key, state); }
+      for (const event of events.slice(state.seen)) {
+        if (event?.type === 'assistant/message') {
+          state.steps += 1;
+          const used = event.data?.usage ?? {};
+          state.inputTokens += Number(used.inputTokens) || 0;
+          state.outputTokens += Number(used.outputTokens) || 0;
+          state.cacheReadTokens += Number(used.cacheReadTokens) || 0;
+          state.cacheWriteTokens += Number(used.cacheWriteTokens) || 0;
+        }
+        if (event?.type === 'tool/call') state.toolCalls += 1;
+      }
+      state.seen = events.length;
+    } catch { /* usage is advisory */ }
   }
 
   start(): () => void {
@@ -196,26 +222,47 @@ export class ChatBridge {
     }
   }
 
-  /** Provider usage and step counts for the current turn, read from the durable session log. */
+  /** Provider usage and step counts for the current turn, including child subagent sessions. */
   private usageFor(sessionId: string) {
     try {
       const agents = this.ctx.get('agents') as any;
       const events = agents?.get?.(sessionId)?.session?.snapshotEvents?.() ?? [];
       let start = 0;
       for (let i = events.length - 1; i >= 0; i--) if (events[i]?.type === 'turn/start') { start = i; break; }
-      const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, steps: 0, toolCalls: 0 };
-      for (const event of events.slice(start)) {
-        if (event?.type === 'assistant/message') {
-          usage.steps += 1;
-          const used = event.data?.usage ?? {};
-          usage.inputTokens += Number(used.inputTokens) || 0;
-          usage.outputTokens += Number(used.outputTokens) || 0;
-          usage.cacheReadTokens += Number(used.cacheReadTokens) || 0;
-          usage.cacheWriteTokens += Number(used.cacheWriteTokens) || 0;
+      const parentEvents = events.slice(start);
+      const own = this.sessionUsage.get(sessionId.replace(/^session-/, ''));
+      const usage = { inputTokens: own?.inputTokens ?? 0, outputTokens: own?.outputTokens ?? 0,
+        cacheReadTokens: own?.cacheReadTokens ?? 0, cacheWriteTokens: own?.cacheWriteTokens ?? 0,
+        steps: own?.steps ?? 0, toolCalls: own?.toolCalls ?? 0 };
+      if (!usage.steps) {
+        for (const event of parentEvents) {
+          if (event?.type === 'assistant/message') {
+            usage.steps += 1;
+            const used = event.data?.usage ?? {};
+            usage.inputTokens += Number(used.inputTokens) || 0;
+            usage.outputTokens += Number(used.outputTokens) || 0;
+            usage.cacheReadTokens += Number(used.cacheReadTokens) || 0;
+            usage.cacheWriteTokens += Number(used.cacheWriteTokens) || 0;
+          }
+          if (event?.type === 'tool/call') usage.toolCalls += 1;
         }
-        if (event?.type === 'tool/call') usage.toolCalls += 1;
       }
-      return usage.steps ? usage : undefined;
+      const children = new Set<string>();
+      for (const event of parentEvents) {
+        if (event?.type === 'subagent/catalog' && event.data?.childId) children.add(String(event.data.childId));
+        if (event?.type === 'tool/result') {
+          const text = JSON.stringify(event.data?.message?.content ?? '');
+          for (const match of text.matchAll(/started subagent ([0-9a-f-]{36})/g)) children.add(match[1]);
+        }
+      }
+      for (const child of children) {
+        const used = this.sessionUsage.get(child);
+        if (!used) continue;
+        usage.inputTokens += used.inputTokens; usage.outputTokens += used.outputTokens;
+        usage.cacheReadTokens += used.cacheReadTokens; usage.cacheWriteTokens += used.cacheWriteTokens;
+        usage.steps += used.steps; usage.toolCalls += used.toolCalls;
+      }
+      return usage.steps ? { ...usage, subagents: children.size } : undefined;
     } catch { return undefined; }
   }
 
