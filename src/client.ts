@@ -16,7 +16,6 @@ import { Alert } from './ui/alert.js';
 import { installStyles } from './ui/styles.js';
 import { ReloadStudioDialog } from './reload-view.js';
 import { selectionDockView } from './selection-dock.js';
-import { selectionBarView } from './selection-bar.js';
 
 const panelId = 'vishvakarma' as MainPanelId;
 export const inject = ['remote', 'commandUi', 'layout', 'slots'];
@@ -41,10 +40,6 @@ function registerWorkspace(ctx: Context) {
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: panelId }, Anchor));
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: panelId, order: 0 }, Studio));
-  // Fullscreen Studio: the composer is off-screen, so this bar is the only place that shows which
-  // context a "Передать в чат" action will insert before the user leaves the canvas.
-  const surfaceStore = { subscribe, get: () => surface };
-  ctx.slots.inject('shell.bottom', () => ctx.slots.register({ name: 'shell.bottom' }, selectionBarView(ctx, surfaceStore)));
   function Anchor() {
     const ref = useRef<HTMLDivElement>(null);
     useLayoutEffect(() => {

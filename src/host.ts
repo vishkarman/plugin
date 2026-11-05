@@ -13,6 +13,8 @@ import { Connection, defaultCredentialsFile, serverInfo, type Config as Connecti
 import { studioRemote, type SelectionRemote, type StudioConnection } from './remote.js';
 import { registerAdapterTools } from './adapter-tools.js';
 import { registerSelectionTools } from './selection-tools.js';
+import { ChatBridge } from './chat-bridge.js';
+import { registerChatTools } from './chat-tools.js';
 import { output, run } from './tool-output.js';
 import { PluginUpdates } from './updates.js';
 import type { UpdateNotice, UpdateSettings, UpdateStatus } from './update-contract.js';
@@ -48,6 +50,9 @@ export function apply(ctx: Context, config: ConnectionConfig) {
   const connection = new Connection(config);
   new StudioService(ctx, connection, config);
   ctx.typert.remotes.register(studioRemote);
+  const chatBridge = new ChatBridge(ctx, connection, config.credentialsFile);
+  ctx.effect(() => chatBridge.start());
+  registerChatTools(ctx, chatBridge);
   ctx.tools.register(defineTool({
     name: 'vishvakarma_read_project', description: 'Прочитать исходный demo-проект Vishvakarma, HTML и ревизию. Доступен только первоначальному владельцу установки (legacy demo первого прототипа); владелец проекта не является администратором установки, а собственные и приглашённые проекты читаются через vishvakarma_adapter_project.',
     parameters: {}, output, isConcurrencySafe: () => true,

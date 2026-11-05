@@ -45,6 +45,10 @@
     "selection.ts": {
       "source": "@vishkarman/server/contracts/selection.ts",
       "sha256": "f347f5da413871526425a89a2c06136e6cceddfd51d9f5e4018b08ecf660537d"
+    },
+    "chat.ts": {
+      "source": "@vishkarman/server/contracts/chat.ts",
+      "sha256": "5aaef5241d4997743f3207196dcff16de2ec7a9cc1ba40784daafa8aef9f9954"
     }
   }
 }

@@ -13,6 +13,7 @@ import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, WORKSPACE_CAPABILITY, ty
 import type { BuildInfo } from '../contracts/runner.js';
 import { ACCOUNT_CAPABILITY, type AuthUser, type ProjectAccess } from '../contracts/access.js';
 import type { SelectionSnapshot } from '../contracts/selection.js';
+import type { AgentChatClaim, AgentChatHistory, AgentChatRequest, ChatMessage } from '../contracts/chat.js';
 import { missingCapabilities } from './server-capabilities.js';
 
 FormatRegistry.Set('uuid',value=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
@@ -185,6 +186,45 @@ export class Connection {
         if (attempt !== 0 || signal?.aborted || !(error instanceof ConnectionError) || error.code !== 'TRANSPORT') throw error;
       }
     }
+  }
+  async account(signal?: AbortSignal) {
+    const { token, capabilities } = await this.credentials(signal);
+    return currentUser(this.origin, token, capabilities, signal);
+  }
+  async agentChatNext(signal?: AbortSignal): Promise<AgentChatRequest | null> {
+    const { token } = await this.credentials(signal);
+    const result = await request<{ request: AgentChatRequest | null }>(this.origin, '/api/v1/agent/chat/next', token, undefined, signal);
+    return result.request;
+  }
+  async claimChat(requestId: string, sessionId: string, instanceId: string, signal?: AbortSignal): Promise<AgentChatClaim | null> {
+    const { token } = await this.credentials(signal);
+    const result = await request<{ request: AgentChatClaim | null }>(this.origin, '/api/v1/agent/chat/' + requestId + '/claim', token, { sessionId, instanceId }, signal, 'POST');
+    return result.request;
+  }
+  async chatDelivered(requestId: string, leaseToken: string, sessionId: string, signal?: AbortSignal) {
+    const { token } = await this.credentials(signal);
+    return request<{ ok: true }>(this.origin, '/api/v1/agent/chat/' + requestId + '/delivered', token, { leaseToken, sessionId }, signal, 'POST');
+  }
+  async chatWorking(requestId: string, leaseToken: string, sessionId: string, signal?: AbortSignal) {
+    const { token } = await this.credentials(signal);
+    return request<{ ok: true }>(this.origin, '/api/v1/agent/chat/' + requestId + '/working', token, { leaseToken, sessionId }, signal, 'POST');
+  }
+  async chatAnswer(requestId: string, leaseToken: string, sessionId: string, body: string, idempotencyKey: string, askOptions: string[] | undefined, signal?: AbortSignal): Promise<{ message: ChatMessage }> {
+    const { token } = await this.credentials(signal);
+    return request(this.origin, '/api/v1/agent/chat/' + requestId + '/answer', token,
+      { leaseToken, sessionId, body, idempotencyKey, ...(askOptions ? { askOptions } : {}) }, signal, 'POST');
+  }
+  async chatFailed(requestId: string, leaseToken: string, sessionId: string, error: string, signal?: AbortSignal) {
+    const { token } = await this.credentials(signal);
+    return request<{ ok: true }>(this.origin, '/api/v1/agent/chat/' + requestId + '/failed', token, { leaseToken, sessionId, error }, signal, 'POST');
+  }
+  async chatHistory(projectId: string, signal?: AbortSignal): Promise<AgentChatHistory> {
+    const { token } = await this.credentials(signal);
+    return request(this.origin, '/api/v1/projects/' + encodeURIComponent(projectId) + '/chat/history', token, undefined, signal);
+  }
+  async chatPresence(instanceId: string, online: boolean, signal?: AbortSignal) {
+    const { token } = await this.credentials(signal);
+    return request(this.origin, '/api/v1/agent/presence', token, { instanceId, online }, signal, 'POST');
   }
   async adapterExamples(signal?: AbortSignal): Promise<{ projects: { id: string; name: string; description: string; access: ProjectAccess }[]; templates: AdapterExample[]; canCreate: boolean }> {
     const { token, capabilities } = await this.credentials(signal, WORKSPACE_CAPABILITY);
