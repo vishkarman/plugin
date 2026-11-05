@@ -92,6 +92,9 @@ export interface ChatRequest {
   id: string; messageId: string; projectId: string; status: ChatRequestStatus;
   attempts: number; expiresAt: string; createdAt: string; error?: string | null;
   deliveredAt?: string | null; answeredAt?: string | null; thinkingMs?: number | null;
+  effort?: 'normal' | 'max';
+  model?: string | null;
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalTokens: number; costUsd: number; steps: number; toolCalls: number; subagents: number } | null;
 }
 export interface ChatUsageSummary {
   requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number;
