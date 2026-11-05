@@ -48,7 +48,7 @@
     },
     "chat.ts": {
       "source": "@vishkarman/server/contracts/chat.ts",
-      "sha256": "781d9a1b9a09fee5f181a3b595f61bf4d1a85d79107d01b2e562fdd554bdd596"
+      "sha256": "c4b5b9d61cd7c27707602d78c516e1e5277158ce7a47895da320a9a226d4387a"
     }
   }
 }

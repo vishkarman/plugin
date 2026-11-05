@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 
-export const CHAT_TTL_MS = 15 * 60_000;
+export const CHAT_TTL_MS = 60 * 60_000;
 export const CHAT_LEASE_MS = 5 * 60_000;
 export const CHAT_MESSAGE_MAX = 4_000;
 export const CHAT_HISTORY_LIMIT = 40;
@@ -33,6 +33,7 @@ export const ChatSend = Type.Object({
 export type ChatSendInput = Static<typeof ChatSend>;
 
 export const ChatCancel = Type.Object({ requestId: Uuid }, { additionalProperties: false });
+export const ChatQueueControl = Type.Object({ paused: Type.Boolean() }, { additionalProperties: false });
 export const ChatClaim = Type.Object({
   sessionId: Type.String({ minLength: 1, maxLength: 200 }),
   instanceId: Type.String({ minLength: 1, maxLength: 120 }),
@@ -98,6 +99,7 @@ export interface ChatUsageSummary {
 export interface ChatUsageResponse { session: ChatUsageSummary; project: ChatUsageSummary }
 export interface ChatState {
   messages: ChatMessage[];
+  queuePaused: boolean;
   requests: ChatRequest[];
   agentOnline: boolean;
   canUseAgent: boolean;
