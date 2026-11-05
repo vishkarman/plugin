@@ -62,7 +62,7 @@ export class ChatBridge {
     const work = this.active.get(input.requestId);
     if (!work || work.sessionId !== sessionId) throw new Error('Запрос не принадлежит этой сессии DSH или уже завершён. Не повторяйте ответ.');
     const result = await this.connection.chatAnswer(input.requestId, work.leaseToken, work.sessionId, input.body,
-      randomUUID(), input.action === 'ask' ? input.options ?? ['Да', 'Нет'] : undefined);
+      randomUUID(), input.action === 'ask' ? input.options ?? ['Да', 'Нет'] : undefined, this.traceFor(work.sessionId));
     this.active.delete(input.requestId);
     return { answered: true, requestId: input.requestId, messageId: result.message.id };
   }
@@ -154,6 +154,39 @@ export class ChatBridge {
       requestId: claimed.id, projectId: claimed.projectId, sessionId, leaseToken: claimed.leaseToken,
       reminders: 0, lastBeat: Date.now(),
     });
+  }
+
+  /** Compact user-facing trace of what the agent did in this turn; never raw reasoning. */
+  private traceFor(sessionId: string): Array<{ label: string; detail?: string }> {
+    try {
+      const agents = this.ctx.get('agents') as any;
+      const agent = agents?.get?.(sessionId);
+      const events = agent?.session?.snapshotEvents?.() ?? [];
+      let start = 0;
+      for (let i = events.length - 1; i >= 0; i--) if (events[i]?.type === 'turn/start') { start = i; break; }
+      const labels: Array<{ label: string; detail?: string }> = [];
+      const seen = new Set<string>();
+      const map: Record<string, string> = {
+        vishvakarma_adapter_project: 'прочитал проект', vishvakarma_editor: 'изменил элемент',
+        vishvakarma_write_files: 'изменил исходники', vishvakarma_edit_target: 'изменил элемент',
+        vishvakarma_preview: 'проверил предпросмотр', vishvakarma_build: 'проверил сборку',
+        vishvakarma_history: 'посмотрел историю версий', vishvakarma_comments: 'посмотрел обсуждения',
+        vishvakarma_selection: 'проверил выделение', vishvakarma_asset: 'обновил ресурс',
+        vishvakarma_export: 'подготовил экспорт',
+      };
+      for (const event of events.slice(start)) {
+        if (event?.type !== 'tool/call') continue;
+        const name = String(event.data?.name ?? '');
+        if (!name || name === 'skill' || name === 'vishvakarma_chat') continue;
+        const label = map[name] ?? 'выполнил действие';
+        if (seen.has(label)) continue;
+        seen.add(label);
+        const detail = name === 'vishvakarma_write_files' ? 'исходники проекта' : undefined;
+        labels.push(detail ? { label, detail } : { label });
+        if (labels.length >= 8) break;
+      }
+      return labels;
+    } catch { return []; }
   }
 
   /** Feature-detect the live agent cancellation surface across DSH builds. */

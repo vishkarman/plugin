@@ -42,11 +42,16 @@ export const ChatFailed = Type.Object({
   leaseToken: Uuid, sessionId: Type.String({ minLength: 1, maxLength: 200 }),
   error: Type.String({ minLength: 1, maxLength: 500 }),
 }, { additionalProperties: false });
+export const ChatTraceItem = Type.Object({
+  label: Type.String({ minLength: 1, maxLength: 160 }),
+  detail: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+}, { additionalProperties: false });
 export const ChatAnswer = Type.Object({
   leaseToken: Uuid, sessionId: Type.String({ minLength: 1, maxLength: 200 }),
   body: Type.String({ minLength: 1, maxLength: CHAT_MESSAGE_MAX }),
   idempotencyKey: Uuid,
   askOptions: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 8 })),
+  trace: Type.Optional(Type.Array(ChatTraceItem, { maxItems: 12 })),
 }, { additionalProperties: false });
 export const ChatClaimBody = Type.Object({
   sessionId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -68,10 +73,12 @@ export type ChatRequestStatus = 'queued' | 'claimed' | 'delivered' | 'working' |
 export interface ChatMessage {
   id: string; projectId: string; role: ChatRole; body: string; createdAt: string;
   requestId?: string | null; replyToMessageId?: string | null; askOptions?: string[] | null;
+  trace?: Array<{ label: string; detail?: string }> | null;
 }
 export interface ChatRequest {
   id: string; messageId: string; projectId: string; status: ChatRequestStatus;
   attempts: number; expiresAt: string; createdAt: string; error?: string | null;
+  deliveredAt?: string | null; answeredAt?: string | null; thinkingMs?: number | null;
 }
 export interface ChatState {
   messages: ChatMessage[];
