@@ -213,6 +213,10 @@ export class Connection {
     const { token } = await this.credentials(signal);
     return request<{ ok: true }>(this.origin, '/api/v1/agent/chat/' + requestId + '/working', token, { leaseToken, sessionId }, signal, 'POST');
   }
+  async chatActivity(requestId: string, leaseToken: string, sessionId: string, activity: string, signal?: AbortSignal) {
+    const { token } = await this.credentials(signal);
+    return request<{ ok: true }>(this.origin, '/api/v1/agent/chat/' + requestId + '/activity', token, { leaseToken, sessionId, activity }, signal, 'POST');
+  }
   async chatRequestStatus(requestId: string, signal?: AbortSignal): Promise<{ status: string | null }> {
     const { token } = await this.credentials(signal);
     return request(this.origin, '/api/v1/agent/chat/' + requestId + '/status', token, undefined, signal);

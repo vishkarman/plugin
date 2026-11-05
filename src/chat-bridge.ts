@@ -8,7 +8,7 @@ import type { Connection } from './connection.js';
 type SessionBinding = { sessionId: string };
 type ActiveWork = {
   requestId: string; projectId: string; sessionId: string; leaseToken: string;
-  reminders: number; lastBeat: number;
+  reminders: number; lastBeat: number; lastActivity?: string; lastActivityAt?: number;
 };
 
 const POLL_MS = 1_500;
@@ -62,7 +62,10 @@ export class ChatBridge {
           state.cacheReadTokens += Number(used.cacheReadTokens) || 0;
           state.cacheWriteTokens += Number(used.cacheWriteTokens) || 0;
         }
-        if (event?.type === 'tool/call') state.toolCalls += 1;
+        if (event?.type === 'tool/call') {
+          state.toolCalls += 1;
+          this.publishActivity(key, String(event.data?.name ?? ''));
+        }
       }
       state.seen = events.length;
     } catch { /* usage is advisory */ }
@@ -222,6 +225,26 @@ export class ChatBridge {
     }
   }
 
+  /** Send one throttled, factual line about the current tool action. */
+  private publishActivity(sessionId: string, toolName: string) {
+    try {
+      const work = [...this.active.values()].find(item => item.sessionId === sessionId);
+      if (!work) return;
+      const labels: Record<string, string> = {
+        vishvakarma_adapter_project: 'читает проект', read_image: 'смотрит изображения', bash: 'выполняет команды',
+        write: 'меняет исходники', patch: 'меняет исходники', edit: 'меняет исходники',
+        vishvakarma_write_files: 'меняет исходники', vishvakarma_editor: 'меняет исходники', vishvakarma_edit_target: 'меняет исходники',
+        vishvakarma_preview: 'проверяет предпросмотр', vishvakarma_build: 'проверяет сборку',
+        subagent: 'запускает субагента', todo_write: 'обновляет план', list_agents: 'координирует субагентов', send_message: 'координирует субагентов',
+      };
+      const label = labels[toolName];
+      if (!label) return;
+      if (label === work.lastActivity && Date.now() - (work.lastActivityAt ?? 0) < 2500) return;
+      work.lastActivity = label; work.lastActivityAt = Date.now();
+      void this.connection.chatActivity(work.requestId, work.leaseToken, work.sessionId, label).catch(() => {});
+    } catch { /* activity is advisory */ }
+  }
+
   /** Provider usage and step counts for the current turn, including child subagent sessions. */
   private usageFor(sessionId: string) {
     try {
@@ -266,39 +289,6 @@ export class ChatBridge {
     } catch { return undefined; }
   }
 
-  /** Compact user-facing trace of what the agent did in this turn; never raw reasoning. */
-  private traceFor(sessionId: string): Array<{ label: string; detail?: string }> {
-    try {
-      const agents = this.ctx.get('agents') as any;
-      const agent = agents?.get?.(sessionId);
-      const events = agent?.session?.snapshotEvents?.() ?? [];
-      let start = 0;
-      for (let i = events.length - 1; i >= 0; i--) if (events[i]?.type === 'turn/start') { start = i; break; }
-      const labels: Array<{ label: string; detail?: string }> = [];
-      const seen = new Set<string>();
-      const map: Record<string, string> = {
-        vishvakarma_adapter_project: 'прочитал проект', vishvakarma_editor: 'изменил элемент',
-        vishvakarma_write_files: 'изменил исходники', vishvakarma_edit_target: 'изменил элемент',
-        vishvakarma_preview: 'проверил предпросмотр', vishvakarma_build: 'проверил сборку',
-        vishvakarma_history: 'посмотрел историю версий', vishvakarma_comments: 'посмотрел обсуждения',
-        vishvakarma_selection: 'проверил выделение', vishvakarma_asset: 'обновил ресурс',
-        vishvakarma_export: 'подготовил экспорт',
-      };
-      for (const event of events.slice(start)) {
-        if (event?.type !== 'tool/call') continue;
-        const name = String(event.data?.name ?? '');
-        if (!name || name === 'skill' || name === 'vishvakarma_chat') continue;
-        const label = map[name] ?? 'выполнил действие';
-        if (seen.has(label)) continue;
-        seen.add(label);
-        const detail = name === 'vishvakarma_write_files' ? 'исходники проекта' : undefined;
-        labels.push(detail ? { label, detail } : { label });
-        if (labels.length >= 8) break;
-      }
-      return labels;
-    } catch { return []; }
-  }
-
   /** On-demand project chat history for the agent; the bridge caps the response size. */
   async history(sessionId: string, limit = 10, projectId?: string) {
     const target = projectId ?? this.projectForSession(sessionId);
@@ -311,6 +301,34 @@ export class ChatBridge {
   private projectForSession(sessionId: string): string | null {
     for (const [key, value] of Object.entries(this.bindings)) if (value === sessionId) return key.split(':').slice(2).join(':');
     return null;
+  }
+
+  /** Compact user-facing trace of what the agent did in this turn; never raw reasoning. */
+  private traceFor(sessionId: string): Array<{ label: string; detail?: string }> {
+    try {
+      const agents = this.ctx.get('agents') as any;
+      const events = agents?.get?.(sessionId)?.session?.snapshotEvents?.() ?? [];
+      let start = 0;
+      for (let i = events.length - 1; i >= 0; i--) if (events[i]?.type === 'turn/start') { start = i; break; }
+      const counts = new Map<string, number>();
+      const order: string[] = [];
+      const add = (label: string) => { if (!counts.has(label)) order.push(label); counts.set(label, (counts.get(label) ?? 0) + 1); };
+      const map: Record<string, string> = {
+        vishvakarma_adapter_project: 'прочитал проект', read_image: 'посмотрел изображения', bash: 'выполнил shell-команды',
+        write: 'изменил файлы', patch: 'изменил файлы', edit: 'изменил файлы',
+        vishvakarma_write_files: 'изменил исходники', vishvakarma_editor: 'изменил элемент', vishvakarma_edit_target: 'изменил элемент',
+        vishvakarma_preview: 'проверил предпросмотр', vishvakarma_build: 'проверил сборку',
+        subagent: 'запустил субагента', todo_write: 'обновил план', list_agents: 'координировал субагентов', send_message: 'координировал субагентов',
+        vishvakarma_history: 'посмотрел историю версий', vishvakarma_comments: 'посмотрел обсуждения',
+      };
+      for (const event of events.slice(start)) {
+        if (event?.type !== 'tool/call') continue;
+        const name = String(event.data?.name ?? '');
+        if (!name || name === 'skill' || name === 'vishvakarma_chat') continue;
+        add(map[name] ?? 'выполнил действие');
+      }
+      return order.slice(0, 8).map(label => { const n = counts.get(label) ?? 0; return n > 1 ? { label: label + ' ×' + n } : { label }; });
+    } catch { return []; }
   }
 
   /** Feature-detect the live agent cancellation surface across DSH builds. */

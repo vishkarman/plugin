@@ -34,6 +34,10 @@ export type ChatSendInput = Static<typeof ChatSend>;
 
 export const ChatCancel = Type.Object({ requestId: Uuid }, { additionalProperties: false });
 export const ChatQueueControl = Type.Object({ paused: Type.Boolean() }, { additionalProperties: false });
+export const ChatActivity = Type.Object({
+  leaseToken: Uuid, sessionId: Type.String({ minLength: 1, maxLength: 200 }),
+  activity: Type.String({ minLength: 1, maxLength: 80 }),
+}, { additionalProperties: false });
 export const ChatClaim = Type.Object({
   sessionId: Type.String({ minLength: 1, maxLength: 200 }),
   instanceId: Type.String({ minLength: 1, maxLength: 120 }),
@@ -94,6 +98,7 @@ export interface ChatRequest {
   deliveredAt?: string | null; answeredAt?: string | null; thinkingMs?: number | null;
   effort?: 'normal' | 'max';
   model?: string | null;
+  activity?: string | null;
   usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalTokens: number; costUsd: number; steps: number; toolCalls: number; subagents: number } | null;
 }
 export interface ChatUsageSummary {
