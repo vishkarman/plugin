@@ -38,7 +38,7 @@ export const studioRemote: TypertRemoteContribution = {
     id: 'vishvakarma/updateNotice', service: 'vishvakarma', namespace: 'vishvakarma', method: 'updateNotice',
     invocation: { kind: 'direct' }, parameters: [],
     result: { mode: 'strict', typeSymbol: 'UpdateNotice', create: () => updateNoticeSchema },
-  }, ...['updateStatus', 'checkUpdate', 'installUpdate', 'saveUpdateSettings'].map(method => ({
+  }, ...['updateStatus', 'checkUpdate', 'installUpdate', 'updatePlugin', 'saveUpdateSettings'].map(method => ({
     id: `vishvakarma/${method}`, service: 'vishvakarma', namespace: 'vishvakarma', method,
     invocation: { kind: 'direct' as const },
     parameters: method === 'saveUpdateSettings' ? [{ name: 'settings', wire: 'settings', source: 'json' as const, codec: { mode: 'strict' as const, typeSymbol: 'UpdateSettings', create: () => updateSettingsSchema } }] : [],
@@ -53,6 +53,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'vishvakarma/updateNotice': () => Promise<RemoteResult<UpdateNotice>>;
     'vishvakarma/checkUpdate': () => Promise<RemoteResult<UpdateStatus>>;
     'vishvakarma/installUpdate': () => Promise<RemoteResult<UpdateStatus>>;
+    'vishvakarma/updatePlugin': () => Promise<RemoteResult<UpdateStatus>>;
     'vishvakarma/saveUpdateSettings': (settings: UpdateSettings) => Promise<RemoteResult<UpdateStatus>>;
   }
 }

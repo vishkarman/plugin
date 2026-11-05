@@ -62,6 +62,11 @@ export function updateView(ctx: Context) {
     const busy = pending || Boolean(status && ['checking', 'building', 'installing'].includes(status.phase));
     useEffect(() => { if (status && !busy) void refreshNotice(); }, [status?.phase, status?.settings.development, status?.settings.directory, busy]);
     const dirty = draft && status && (draft.development !== status.settings.development || draft.directory !== status.settings.directory);
+    const blockedReason = !status ? '' : !status.available ? 'Менеджер плагинов DSH недоступен.'
+      : !status.settings.development ? 'Включите режим разработчика и сохраните источник обновлений.'
+      : status.restartRequired ? 'Установленная версия ещё не загружена. Перезапустите DSH и проверьте Components → Running.'
+      : Boolean(dirty) ? 'Сохраните настройки источника обновлений.' : '';
+    const primaryLabel = status?.restartRequired ? 'Перезапустите DSH' : busy ? 'Обновляем…' : status?.phase === 'ready' ? 'Обновить плагин' : 'Проверить и обновить';
     return h(HostDialog, { title: 'Обновление Vishvakarma', close, headerAction: h(ToolbarButton, { icon: 'close', label: 'Закрыть обновление', onClick: close }) },
       !status ? h('p', null, 'Читаем состояние плагина…') : h('div', null,
         h('p', null, `Установлено: ${status.installedVersion}`),
@@ -69,11 +74,11 @@ export function updateView(ctx: Context) {
         status.sourceVersion ? h('p', null, `Версия исходников: ${status.sourceVersion} (локальная сборка)`): null,
         h('p', { style: { overflowWrap: 'anywhere', fontSize: 13 } }, `Профиль текущего окна: ${status.profile} · ${status.profileDirectory}`),
         h(Alert, { role: 'status', 'aria-live': 'polite', className: 'vkp:mt-3' }, status.message),
-        status.restartRequired ? h('p', null, 'Перезапустите DSH, чтобы загрузить установленную версию. После запуска проверьте Components → Running.') : null,
-        h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0' } },
-          h(Button, { type: 'button', disabled: busy || !status.available || !status.settings.development || Boolean(dirty) || status.restartRequired, onClick: () => void action(() => ctx.remote.vishvakarma.checkUpdate()) }, 'Проверить обновление'),
-          h(Button, { type: 'button', disabled: busy || !status.canUpdate || Boolean(dirty), onClick: () => void action(() => ctx.remote.vishvakarma.installUpdate()) }, 'Обновить плагин')),
-        draft ? h('details', { open: !status.settings.development },
+        h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0 8px' } },
+          h(Button, { type: 'button', disabled: busy || Boolean(blockedReason), onClick: () => void action(() => ctx.remote.vishvakarma.updatePlugin()) }, primaryLabel),
+          h(Button, { type: 'button', variant: 'outline', disabled: busy || Boolean(blockedReason), onClick: () => void action(() => ctx.remote.vishvakarma.checkUpdate()) }, 'Проверить обновление')),
+        blockedReason ? h('p', { style: { fontSize: 12, opacity: .75, margin: '0 0 12px' } }, blockedReason) : null,
+        draft ? h('details', { open: !status.settings.development || Boolean(dirty) },
           h('summary', null, 'Источник обновлений'),
           h('p', null, 'Загрузка готовых выпусков пока не подключена. Для локальной разработки можно собирать плагин из своих исходников.'),
           h(Label, { className: 'vkp:flex vkp:items-center vkp:gap-2 vkp:my-3' },

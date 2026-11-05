@@ -45,6 +45,8 @@ class StudioService extends TypertRemoteService {
   async checkUpdate(): Promise<UpdateStatus> { return this.updates.start('check'); }
   @Remote
   async installUpdate(): Promise<UpdateStatus> { return this.updates.start('install'); }
+  @Remote
+  async updatePlugin(): Promise<UpdateStatus> { return this.updates.start('update'); }
 }
 export function apply(ctx: Context, config: ConnectionConfig) {
   const connection = new Connection(config);

@@ -136,7 +136,7 @@ export class PluginUpdates {
     await stat(join(root, 'node_modules/esbuild'));
     return root;
   }
-  async start(action: 'check' | 'install'): Promise<UpdateStatus> {
+  async start(action: 'check' | 'install' | 'update'): Promise<UpdateStatus> {
     if (!this.profile || !this.manager()) throw new Error('Менеджер плагинов DSH недоступен.');
     const settings = await this.settings();
     if (!settings.development) throw new Error('Готовые выпуски ещё не подключены. Для локальной сборки включите режим разработчика.');
@@ -145,7 +145,7 @@ export class PluginUpdates {
     try {
       const old = await this.state();
       if (action === 'install' && old?.phase !== 'ready') throw new Error('Сначала проверьте обновление.');
-      const job: Job = { pid: process.pid, id: randomUUID(), phase: action === 'check' ? 'checking' : 'building', message: action === 'check' ? 'Проверяем исходники и совместимость…' : 'Собираем обновление…', logPath: '', candidate: old?.candidate };
+      const job: Job = { pid: process.pid, id: randomUUID(), phase: action === 'check' ? 'checking' : 'building', message: action === 'check' ? 'Проверяем исходники и совместимость…' : action === 'update' ? 'Проверяем, собираем и устанавливаем обновление…' : 'Собираем обновление…', logPath: '', candidate: action === 'install' ? old?.candidate : undefined };
       await atomicJson(this.stateFile, job);
       // The manager belongs to DSH, not this plugin. Do not cancel this promise on
       // plugin disposal: HMR may unload our UI while the manager finishes its work.
@@ -153,7 +153,7 @@ export class PluginUpdates {
     } catch (e) { await rm(this.lockFile, { force: true }); throw e; }
     return this.status();
   }
-  private async execute(action: 'check' | 'install', settings: UpdateSettings, job: Job) {
+  private async execute(action: 'check' | 'install' | 'update', settings: UpdateSettings, job: Job) {
     try {
       const candidate = await this.prepare(settings, job, action === 'check');
       job.candidate = candidate; job.logPath = candidate.logPath;
@@ -162,6 +162,14 @@ export class PluginUpdates {
         const changed = info?.sourceFingerprint !== candidate.sourceFingerprint;
         job.phase = changed ? 'ready' : 'idle';
         job.message = changed ? 'Есть изменения в локальных исходниках. Совместимость проверена.' : 'Установлена сборка этих исходников. Обновление не требуется.';
+      } else if (action === 'update') {
+        const info = await optionalJson(join(dirname(this.packageFile()), 'dist/build-info.json'));
+        if (info?.sourceFingerprint === candidate.sourceFingerprint) {
+          job.phase = 'idle';
+          job.message = 'Установлена сборка этих исходников. Обновление не требуется.';
+        } else {
+          await this.install(candidate, job);
+        }
       } else {
         await this.install(candidate, job);
       }
@@ -180,7 +188,7 @@ export class PluginUpdates {
     const dshVersion = (await json(profile.installAnchor)).version;
     await atomicJson(contextFile, { dshVersion, serverUrl: this.config.serverUrl, credentialsFile: this.config.credentialsFile });
     const args = [...invocation.args, 'exec', 'node', join(root, 'scripts/update-dsh.mjs'), '--dsh-home', profile.home, '--profile', profile.name, '--context-file', contextFile, '--result-file', resultFile, check ? '--check' : '--prepare'];
-    if (!check) args.push('--expected-fingerprint', job.candidate!.sourceFingerprint);
+    if (!check && job.candidate?.sourceFingerprint) args.push('--expected-fingerprint', job.candidate.sourceFingerprint);
     const handle = await open(logPath, 'wx', 0o600);
     try {
       await new Promise<void>((resolve, reject) => {
