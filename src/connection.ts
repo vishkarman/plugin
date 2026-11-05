@@ -226,9 +226,10 @@ export class Connection {
     const { token } = await this.credentials(signal);
     return request<{ ok: true }>(this.origin, '/api/v1/agent/chat/' + requestId + '/failed', token, { leaseToken, sessionId, error }, signal, 'POST');
   }
-  async chatHistory(projectId: string, signal?: AbortSignal): Promise<AgentChatHistory> {
+  async chatHistory(projectId: string, limit?: number, signal?: AbortSignal): Promise<AgentChatHistory> {
     const { token } = await this.credentials(signal);
-    return request(this.origin, '/api/v1/projects/' + encodeURIComponent(projectId) + '/chat/history', token, undefined, signal);
+    const query = limit === undefined ? '' : '?limit=' + encodeURIComponent(String(limit));
+    return request(this.origin, '/api/v1/projects/' + encodeURIComponent(projectId) + '/chat/history' + query, token, undefined, signal);
   }
   async chatPresence(instanceId: string, online: boolean, signal?: AbortSignal) {
     const { token } = await this.credentials(signal);

@@ -93,16 +93,16 @@ export class ChatBridge {
       if (!this.accountId) this.accountId = (await this.connection.account()).id;
       const next = await this.connection.agentChatNext();
       if (!next) { await this.presence(true); return; }
-      const sessionId = await this.sessionFor(next.projectId);
+      const session = await this.sessionFor(next.projectId);
       const reconcile = next.status === 'reconciling';
-      const claimed = await this.connection.claimChat(next.id, sessionId, this.instanceId, reconcile);
+      const claimed = await this.connection.claimChat(next.id, session.sessionId, this.instanceId, reconcile);
       if (!claimed) return;
       if (claimed.reconcile) {
         // Do not deliver again: the previous worker may have already run this request.
-        await this.connection.chatReconcile(claimed.id, claimed.leaseToken, sessionId, 'unknown').catch(() => {});
+        await this.connection.chatReconcile(claimed.id, claimed.leaseToken, session.sessionId, 'unknown').catch(() => {});
         return;
       }
-      await this.deliver(claimed, sessionId);
+      await this.deliver(claimed, session.sessionId, session.fresh);
     } catch (error) {
       this.ctx.logger?.warn?.('vishvakarma chat: ' + String(error));
     } finally {
@@ -110,7 +110,7 @@ export class ChatBridge {
     }
   }
 
-  private async sessionFor(projectId: string) {
+  private async sessionFor(projectId: string): Promise<{ sessionId: string; fresh: boolean }> {
     const controller = this.ctx.get('sessionController') as any;
     if (!controller || typeof controller.create !== 'function') throw new Error('sessionController недоступен в этой сборке DSH');
     const { installationId } = await this.connection.credentials();
@@ -118,7 +118,7 @@ export class ChatBridge {
     const saved = this.bindings[key];
     if (saved) {
       const found = await controller.resolveAgent(saved);
-      if (found && !('error' in found)) return saved;
+      if (found && !('error' in found)) return { sessionId: saved, fresh: false };
       const reason = String(found?.error?.message ?? 'неизвестная ошибка');
       // An occupied or restoring session must never be replaced by a second one.
       if (!/not found|unknown session|missing|не найдена|нет сессии/i.test(reason)) throw new Error('сессия проекта недоступна: ' + reason);
@@ -132,15 +132,16 @@ export class ChatBridge {
     if (typeof controller.rename === 'function') await Promise.resolve(controller.rename({ sessionId, title: 'Vishvakarma' })).catch(() => {});
     this.bindings[key] = sessionId;
     await this.writeJson(this.bindingFile, { bindings: this.bindings });
-    return sessionId;
+    return { sessionId, fresh: true };
   }
 
-  private async deliver(claimed: AgentChatClaim, sessionId: string) {
+  private async deliver(claimed: AgentChatClaim, sessionId: string, fresh: boolean) {
     const controller = this.ctx.get('sessionController') as any;
     const found = await controller.resolveAgent(sessionId);
     if (!found || 'error' in found) throw new Error('сессия проекта недоступна перед доставкой');
-    const history = await this.connection.chatHistory(claimed.projectId).catch(() => ({ items: [] }));
-    const text = chatPrompt(claimed, history.items);
+    const history = await this.connection.chatHistory(claimed.projectId, fresh ? 4 : 3).catch(() => ({ items: [] }));
+    const previous = history.items.filter(item => item.id !== claimed.messageId).slice(fresh ? -4 : -2);
+    const text = chatPrompt(claimed, previous, fresh);
     const message = Object.freeze({
       id: randomUUID(), role: 'user', content: [{ type: 'text', text }],
       source: { kind: 'vishvakarma-chat', requestId: claimed.id },
@@ -187,6 +188,20 @@ export class ChatBridge {
       }
       return labels;
     } catch { return []; }
+  }
+
+  /** On-demand project chat history for the agent; the bridge caps the response size. */
+  async history(sessionId: string, limit = 10, projectId?: string) {
+    const target = projectId ?? this.projectForSession(sessionId);
+    if (!target) throw new Error('Нет активного проекта для этой сессии; укажите projectId.');
+    const safe = Math.min(50, Math.max(1, Math.trunc(limit) || 10));
+    const result = await this.connection.chatHistory(target, safe);
+    return { projectId: target, items: result.items.map(item => ({ role: item.role, createdAt: item.createdAt, body: item.body.slice(0, 400) })) };
+  }
+
+  private projectForSession(sessionId: string): string | null {
+    for (const [key, value] of Object.entries(this.bindings)) if (value === sessionId) return key.split(':').slice(2).join(':');
+    return null;
   }
 
   /** Feature-detect the live agent cancellation surface across DSH builds. */
@@ -263,21 +278,23 @@ function contextLines(context: ChatContextValue) {
   return lines;
 }
 
-function chatPrompt(request: AgentChatClaim, history: { role: string; body: string }[]) {
-  const recent = history.slice(-20).map(item => (item.role === 'user' ? 'Пользователь: ' : item.role === 'agent' ? 'Агент: ' : 'Система: ') + item.body.slice(0, 500));
+function chatPrompt(request: AgentChatClaim, previous: { role: string; body: string }[], fresh: boolean) {
+  const history = previous.slice(-(fresh ? 4 : 2)).map(item =>
+    (item.role === 'user' ? 'Пользователь: ' : item.role === 'agent' ? 'Агент: ' : 'Система: ') + item.body.slice(0, 400));
   return [
     'Сообщение из чата Vishvakarma по проекту «' + request.projectId + '».',
     '',
+    'Текущее сообщение пользователя:',
+    request.message.slice(0, 4000),
+    '',
     'Что видит пользователь сейчас:',
     ...contextLines(request.context),
+    ...(history.length ? ['', fresh ? 'Контекст начала чата:' : 'Предыдущие сообщения для непрерывности:', ...history] : []),
     '',
-    ...(recent.length ? ['Последние сообщения проектного чата:', ...recent, ''] : []),
     'Прочитай проект инструментом vishvakarma_adapter_project (action: read) и сверь ревизию и цель перед правкой.',
-    'Это запрос ' + request.id + '. Ответь пользователю в проектном чате инструментом vishvakarma_chat: action reply (или action ask с options, если нужен выбор) и requestId ' + request.id + '.',
-    'Не отправляй сам ответ обычным сообщением: пользователь читает чат Студии.',
-    'Пиши только человеческий результат: что изменилось для пользователя и что сделать дальше. Не указывай ревизии, хеши, commit, ID, названия инструментов, «live preview применён», статусы сборки и прочую техническую телеметрию. Если технический отчёт не просили — ответ в 1–3 предложения.',
-    'Пиши о себе в мужском роде: «переписал», «проверил», «исправил», «готов» — не «переписала», «проверила», «готова».',
-    'Не повторяй в ответе текст задачи или получившийся результат дословно и не вставляй длинные цитаты: назови суть изменения одним-двумя предложениями. Цитируй только если пользователь прямо просит показать результат.',
+    'Если нужен более ранний контекст переписки — вызови vishvakarma_chat_history (limit 1–50, по умолчанию 10).',
+    'Ответь пользователю в чате Студии инструментом vishvakarma_chat: action reply (или action ask с options) и requestId ' + request.id + '.',
+    'Не отвечай обычным сообщением DSH. Пиши только суть по-русски, мужской род, без технических ID/ревизий и без повторения текста пользователя.',
     'Изменения допустимы только при access.canUseAgent по текущим правам.',
   ].join('\n');
 }

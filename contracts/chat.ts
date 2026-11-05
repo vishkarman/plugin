@@ -63,6 +63,9 @@ export const ChatReconcile = Type.Object({
   sessionId: Type.String({ minLength: 1, maxLength: 200 }),
   result: Type.Union([Type.Literal('accepted'), Type.Literal('not-accepted'), Type.Literal('unknown')]),
 }, { additionalProperties: false });
+export const ChatHistoryQuery = Type.Object({
+  limit: Type.Optional(Type.String({ pattern: '^[0-9]{1,2}$' })),
+}, { additionalProperties: false });
 export const ChatPresence = Type.Object({
   instanceId: Type.String({ minLength: 1, maxLength: 120 }), online: Type.Boolean(),
 }, { additionalProperties: false });
@@ -87,7 +90,8 @@ export interface ChatState {
   canUseAgent: boolean;
 }
 export interface AgentChatRequest {
-  id: string; projectId: string; context: ChatContextValue; expiresAt: string; status: ChatRequestStatus;
+  id: string; messageId: string; message: string; projectId: string; context: ChatContextValue;
+  expiresAt: string; status: ChatRequestStatus;
 }
 export interface AgentChatClaim extends AgentChatRequest { leaseToken: string; reconcile: boolean }
 export interface AgentChatHistory { items: ChatMessage[] }

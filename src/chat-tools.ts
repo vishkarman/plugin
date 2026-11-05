@@ -29,4 +29,25 @@ export function registerChatTools(ctx: Context, bridge: ChatBridge) {
       });
     }),
   }));
+
+  ctx.tools.register(defineTool({
+    name: 'vishvakarma_chat_history',
+    description: [
+      'Возвращает последние сообщения проектного чата Студии для текущего аккаунта.',
+      'Вызывайте только когда для ответа действительно нужен более ранний контекст, чем приложенные последние сообщения.',
+      'limit: 1–50, по умолчанию 10. projectId можно не указывать для активного проекта сессии.',
+      'Не заменяет чтение проекта и не содержит reasoning/журналов инструментов.',
+    ].join(' '),
+    parameters: {
+      limit: { type: 'number', description: 'Сколько последних сообщений вернуть, 1–50' },
+      projectId: { type: 'string', description: 'Необязательный id проекта; по умолчанию проект текущей сессии' },
+    },
+    output,
+    isConcurrencySafe: () => true,
+    execute: async (args, exec) => run(async () => {
+      const sessionId = (exec as unknown as { agent?: { id?: string } }).agent?.id;
+      if (!sessionId) throw new Error('Нет исполняющей сессии DSH; история недоступна.');
+      return bridge.history(sessionId, typeof args.limit === 'number' ? args.limit : 10, args.projectId);
+    }),
+  }));
 }
