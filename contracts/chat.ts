@@ -48,12 +48,18 @@ export const ChatTraceItem = Type.Object({
   label: Type.String({ minLength: 1, maxLength: 160 }),
   detail: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
 }, { additionalProperties: false });
+export const ChatUsageInput = Type.Object({
+  inputTokens: Type.Integer({ minimum: 0 }), outputTokens: Type.Integer({ minimum: 0 }),
+  cacheReadTokens: Type.Integer({ minimum: 0 }), cacheWriteTokens: Type.Integer({ minimum: 0 }),
+  steps: Type.Optional(Type.Integer({ minimum: 0 })), toolCalls: Type.Optional(Type.Integer({ minimum: 0 })),
+}, { additionalProperties: false });
 export const ChatAnswer = Type.Object({
   leaseToken: Uuid, sessionId: Type.String({ minLength: 1, maxLength: 200 }),
   body: Type.String({ minLength: 1, maxLength: CHAT_MESSAGE_MAX }),
   idempotencyKey: Uuid,
   askOptions: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 8 })),
   trace: Type.Optional(Type.Array(ChatTraceItem, { maxItems: 12 })),
+  usage: Type.Optional(ChatUsageInput),
 }, { additionalProperties: false });
 export const ChatClaimBody = Type.Object({
   sessionId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -85,6 +91,11 @@ export interface ChatRequest {
   attempts: number; expiresAt: string; createdAt: string; error?: string | null;
   deliveredAt?: string | null; answeredAt?: string | null; thinkingMs?: number | null;
 }
+export interface ChatUsageSummary {
+  requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number;
+  totalTokens: number; costUsd: number; durationMs: number; steps: number; toolCalls: number;
+}
+export interface ChatUsageResponse { session: ChatUsageSummary; project: ChatUsageSummary }
 export interface ChatState {
   messages: ChatMessage[];
   requests: ChatRequest[];

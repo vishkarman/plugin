@@ -62,7 +62,7 @@ export class ChatBridge {
     const work = this.active.get(input.requestId);
     if (!work || work.sessionId !== sessionId) throw new Error('Запрос не принадлежит этой сессии DSH или уже завершён. Не повторяйте ответ.');
     const result = await this.connection.chatAnswer(input.requestId, work.leaseToken, work.sessionId, input.body,
-      randomUUID(), input.action === 'ask' ? input.options ?? ['Да', 'Нет'] : undefined, this.traceFor(work.sessionId));
+      randomUUID(), input.action === 'ask' ? input.options ?? ['Да', 'Нет'] : undefined, this.traceFor(work.sessionId), this.usageFor(work.sessionId));
     this.active.delete(input.requestId);
     return { answered: true, requestId: input.requestId, messageId: result.message.id };
   }
@@ -194,6 +194,29 @@ export class ChatBridge {
     } catch (error) {
       this.ctx.logger?.warn?.('vishvakarma chat: не удалось переключить effort: ' + String(error));
     }
+  }
+
+  /** Provider usage and step counts for the current turn, read from the durable session log. */
+  private usageFor(sessionId: string) {
+    try {
+      const agents = this.ctx.get('agents') as any;
+      const events = agents?.get?.(sessionId)?.session?.snapshotEvents?.() ?? [];
+      let start = 0;
+      for (let i = events.length - 1; i >= 0; i--) if (events[i]?.type === 'turn/start') { start = i; break; }
+      const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, steps: 0, toolCalls: 0 };
+      for (const event of events.slice(start)) {
+        if (event?.type === 'assistant/message') {
+          usage.steps += 1;
+          const used = event.data?.usage ?? {};
+          usage.inputTokens += Number(used.inputTokens) || 0;
+          usage.outputTokens += Number(used.outputTokens) || 0;
+          usage.cacheReadTokens += Number(used.cacheReadTokens) || 0;
+          usage.cacheWriteTokens += Number(used.cacheWriteTokens) || 0;
+        }
+        if (event?.type === 'tool/call') usage.toolCalls += 1;
+      }
+      return usage.steps ? usage : undefined;
+    } catch { return undefined; }
   }
 
   /** Compact user-facing trace of what the agent did in this turn; never raw reasoning. */

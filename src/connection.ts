@@ -217,10 +217,10 @@ export class Connection {
     const { token } = await this.credentials(signal);
     return request(this.origin, '/api/v1/agent/chat/' + requestId + '/status', token, undefined, signal);
   }
-  async chatAnswer(requestId: string, leaseToken: string, sessionId: string, body: string, idempotencyKey: string, askOptions: string[] | undefined, trace?: Array<{ label: string; detail?: string }>, signal?: AbortSignal): Promise<{ message: ChatMessage }> {
+  async chatAnswer(requestId: string, leaseToken: string, sessionId: string, body: string, idempotencyKey: string, askOptions: string[] | undefined, trace?: Array<{ label: string; detail?: string }>, usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps?: number; toolCalls?: number }, signal?: AbortSignal): Promise<{ message: ChatMessage }> {
     const { token } = await this.credentials(signal);
     return request(this.origin, '/api/v1/agent/chat/' + requestId + '/answer', token,
-      { leaseToken, sessionId, body, idempotencyKey, ...(askOptions ? { askOptions } : {}), ...(trace?.length ? { trace } : {}) }, signal, 'POST');
+      { leaseToken, sessionId, body, idempotencyKey, ...(askOptions ? { askOptions } : {}), ...(trace?.length ? { trace } : {}), ...(usage ? { usage } : {}) }, signal, 'POST');
   }
   async chatFailed(requestId: string, leaseToken: string, sessionId: string, error: string, signal?: AbortSignal) {
     const { token } = await this.credentials(signal);
