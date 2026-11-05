@@ -48,12 +48,22 @@ export const ChatAnswer = Type.Object({
   idempotencyKey: Uuid,
   askOptions: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 8 })),
 }, { additionalProperties: false });
+export const ChatClaimBody = Type.Object({
+  sessionId: Type.String({ minLength: 1, maxLength: 200 }),
+  instanceId: Type.String({ minLength: 1, maxLength: 120 }),
+  reconcile: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false });
+export const ChatReconcile = Type.Object({
+  leaseToken: Uuid,
+  sessionId: Type.String({ minLength: 1, maxLength: 200 }),
+  result: Type.Union([Type.Literal('accepted'), Type.Literal('not-accepted'), Type.Literal('unknown')]),
+}, { additionalProperties: false });
 export const ChatPresence = Type.Object({
   instanceId: Type.String({ minLength: 1, maxLength: 120 }), online: Type.Boolean(),
 }, { additionalProperties: false });
 
 export type ChatRole = 'user' | 'agent' | 'system';
-export type ChatRequestStatus = 'queued' | 'claimed' | 'delivered' | 'working' | 'awaiting_user' | 'answered' | 'failed' | 'cancelled' | 'expired';
+export type ChatRequestStatus = 'queued' | 'claimed' | 'delivered' | 'working' | 'reconciling' | 'awaiting_user' | 'answered' | 'failed' | 'cancelled' | 'expired';
 
 export interface ChatMessage {
   id: string; projectId: string; role: ChatRole; body: string; createdAt: string;
@@ -70,7 +80,7 @@ export interface ChatState {
   canUseAgent: boolean;
 }
 export interface AgentChatRequest {
-  id: string; projectId: string; context: ChatContextValue; expiresAt: string;
+  id: string; projectId: string; context: ChatContextValue; expiresAt: string; status: ChatRequestStatus;
 }
-export interface AgentChatClaim extends AgentChatRequest { leaseToken: string }
+export interface AgentChatClaim extends AgentChatRequest { leaseToken: string; reconcile: boolean }
 export interface AgentChatHistory { items: ChatMessage[] }

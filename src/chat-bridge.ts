@@ -94,8 +94,14 @@ export class ChatBridge {
       const next = await this.connection.agentChatNext();
       if (!next) { await this.presence(true); return; }
       const sessionId = await this.sessionFor(next.projectId);
-      const claimed = await this.connection.claimChat(next.id, sessionId, this.instanceId);
+      const reconcile = next.status === 'reconciling';
+      const claimed = await this.connection.claimChat(next.id, sessionId, this.instanceId, reconcile);
       if (!claimed) return;
+      if (claimed.reconcile) {
+        // Do not deliver again: the previous worker may have already run this request.
+        await this.connection.chatReconcile(claimed.id, claimed.leaseToken, sessionId, 'unknown').catch(() => {});
+        return;
+      }
       await this.deliver(claimed, sessionId);
     } catch (error) {
       this.ctx.logger?.warn?.('vishvakarma chat: ' + String(error));
@@ -113,8 +119,11 @@ export class ChatBridge {
     if (saved) {
       const found = await controller.resolveAgent(saved);
       if (found && !('error' in found)) return saved;
-      // Occupied, restoring, or transient failures must not be replaced by a second session.
-      throw new Error('сессия проекта недоступна: ' + String(found?.error?.message ?? 'неизвестная ошибка'));
+      const reason = String(found?.error?.message ?? 'неизвестная ошибка');
+      // An occupied or restoring session must never be replaced by a second one.
+      if (!/not found|unknown session|missing|не найдена|нет сессии/i.test(reason)) throw new Error('сессия проекта недоступна: ' + reason);
+      delete this.bindings[key];
+      await this.writeJson(this.bindingFile, { bindings: this.bindings });
     }
     const workspaceDir = join(this.stateDir, 'workspace');
     await mkdir(workspaceDir, { recursive: true, mode: 0o700 });

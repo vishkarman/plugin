@@ -196,10 +196,14 @@ export class Connection {
     const result = await request<{ request: AgentChatRequest | null }>(this.origin, '/api/v1/agent/chat/next', token, undefined, signal);
     return result.request;
   }
-  async claimChat(requestId: string, sessionId: string, instanceId: string, signal?: AbortSignal): Promise<AgentChatClaim | null> {
+  async claimChat(requestId: string, sessionId: string, instanceId: string, reconcile = false, signal?: AbortSignal): Promise<AgentChatClaim | null> {
     const { token } = await this.credentials(signal);
-    const result = await request<{ request: AgentChatClaim | null }>(this.origin, '/api/v1/agent/chat/' + requestId + '/claim', token, { sessionId, instanceId }, signal, 'POST');
+    const result = await request<{ request: AgentChatClaim | null }>(this.origin, '/api/v1/agent/chat/' + requestId + '/claim', token, { sessionId, instanceId, ...(reconcile ? { reconcile: true } : {}) }, signal, 'POST');
     return result.request;
+  }
+  async chatReconcile(requestId: string, leaseToken: string, sessionId: string, result: 'accepted' | 'not-accepted' | 'unknown', signal?: AbortSignal) {
+    const { token } = await this.credentials(signal);
+    return request<{ status: string }>(this.origin, '/api/v1/agent/chat/' + requestId + '/reconcile', token, { leaseToken, sessionId, result }, signal, 'POST');
   }
   async chatDelivered(requestId: string, leaseToken: string, sessionId: string, signal?: AbortSignal) {
     const { token } = await this.credentials(signal);
