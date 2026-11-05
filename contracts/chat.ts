@@ -53,6 +53,7 @@ export const ChatUsageInput = Type.Object({
   inputTokens: Type.Integer({ minimum: 0 }), outputTokens: Type.Integer({ minimum: 0 }),
   cacheReadTokens: Type.Integer({ minimum: 0 }), cacheWriteTokens: Type.Integer({ minimum: 0 }),
   steps: Type.Optional(Type.Integer({ minimum: 0 })), toolCalls: Type.Optional(Type.Integer({ minimum: 0 })),
+  subagents: Type.Optional(Type.Integer({ minimum: 0 })),
 }, { additionalProperties: false });
 export const ChatAnswer = Type.Object({
   leaseToken: Uuid, sessionId: Type.String({ minLength: 1, maxLength: 200 }),
