@@ -41,9 +41,9 @@ export function selectionBarView(ctx: Context, surface: SurfaceStore) {
     useEffect(() => {
       if (!visible) { setSnapshot(null); setNotice(''); return; }
       void refresh();
-      // The selection is published with a ~400 ms debounce on the server; a short poll keeps this bar
+      // The selection is published with a ~120 ms debounce on the server; a short poll keeps this bar
       // close enough to the canvas without adding a second event channel.
-      const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 1000);
+      const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 250);
       const onFocus = () => void refresh();
       window.addEventListener('focus', onFocus);
       return () => {

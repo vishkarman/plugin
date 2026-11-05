@@ -90,7 +90,7 @@ export function selectionDockView(ctx: Context) {
     useEffect(() => {
       const onFocus = () => void refresh();
       const onVisibility = () => { if (document.visibilityState === 'visible') void refresh(); };
-      const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 15_000);
+      const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 2000);
       window.addEventListener('focus', onFocus);
       document.addEventListener('visibilitychange', onVisibility);
       return () => {
