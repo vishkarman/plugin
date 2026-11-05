@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { createElement as h, useCallback, useEffect, useRef, useState } from 'react';
 import type { SelectionSnapshot } from '../contracts/selection.js';
 import type { SelectionRemote } from './remote.js';
+import { subscribePendingTransfer, takePendingTransfer } from './pending-transfer.js';
 
 /** Public `InputActions` subset from DSH's composer shell; absent outside a session-scoped dock. */
 interface InsertActions {
@@ -11,7 +12,8 @@ interface InsertActions {
 
 const STALE_MS = 10 * 60_000;
 
-function contextText(snapshot: SelectionSnapshot): string {
+/** Frozen compact text inserted into the draft; shared by the dock and the Studio context bar. */
+export function selectionContextText(snapshot: SelectionSnapshot): string {
   const selection = snapshot.selection!;
   const name = snapshot.projectName ?? selection.projectId;
   const target = selection.targetId
@@ -44,6 +46,31 @@ export function selectionDockView(ctx: Context) {
       if (noticeTimer.current) clearTimeout(noticeTimer.current);
       noticeTimer.current = setTimeout(() => setNotice(''), 6000);
     }, []);
+
+    const copyText = useCallback(async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        showNotice('Контекст скопирован для DSH.');
+      } catch {
+        showNotice('Не удалось вставить или скопировать. Скопируйте вручную: ' + text);
+      }
+    }, [showNotice]);
+
+    // A pending transfer arrives from the Studio context bar (the chat panel mounts after the switch).
+    // Consume it once: capture the draft span and insert immediately, without network work in between.
+    useEffect(() => {
+      if (!inputActions) return;
+      const consume = () => {
+        const transfer = takePendingTransfer();
+        if (!transfer) return;
+        let inserted = false;
+        try { inserted = inputActions.insertText(transfer.text, inputActions.captureInsertion()); } catch { inserted = false; }
+        if (inserted) showNotice('Контекст добавлен в задачу.');
+        else void copyText(transfer.text);
+      };
+      consume();
+      return subscribePendingTransfer(consume);
+    }, [inputActions, copyText, showNotice]);
 
     const fetchSelection = useCallback(async (): Promise<SelectionRemote | null> => {
       try {
@@ -81,21 +108,12 @@ export function selectionDockView(ctx: Context) {
     const stale = Date.now() - Date.parse(selection.capturedAt) > STALE_MS;
     const readOnly = snapshot.access ? !snapshot.access.canUseAgent : false;
 
-    async function copy(text: string) {
-      try {
-        await navigator.clipboard.writeText(text);
-        showNotice('Контекст скопирован для DSH.');
-      } catch {
-        showNotice('Не удалось вставить или скопировать. Скопируйте вручную: ' + text);
-      }
-    }
-
     async function insert() {
       if (!snapshot?.supported || !snapshot.selection) return;
       setBusy(true);
       try {
         if (!inputActions) {
-          await copy(contextText(snapshot));
+          await copyText(selectionContextText(snapshot));
           return;
         }
         // Capture the draft span first: insertText rejects a span whose draft revision changed while we read.
@@ -117,7 +135,7 @@ export function selectionDockView(ctx: Context) {
           showNotice('Выбор изменился — нажмите «Вставить в задачу» ещё раз.');
           return;
         }
-        if (!inputActions.insertText(contextText(fresh), span)) await copy(contextText(fresh));
+        if (!inputActions.insertText(selectionContextText(fresh), span)) await copyText(selectionContextText(fresh));
         else showNotice('Контекст добавлен в задачу.');
       } finally {
         setBusy(false);
