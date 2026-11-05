@@ -137,6 +137,7 @@ export class ChatBridge {
 
   private async deliver(claimed: AgentChatClaim, sessionId: string, fresh: boolean) {
     const controller = this.ctx.get('sessionController') as any;
+    await this.applyEffort(sessionId, claimed.effort);
     const found = await controller.resolveAgent(sessionId);
     if (!found || 'error' in found) throw new Error('сессия проекта недоступна перед доставкой');
     const history = await this.connection.chatHistory(claimed.projectId, fresh ? 4 : 3).catch(() => ({ items: [] }));
@@ -155,6 +156,44 @@ export class ChatBridge {
       requestId: claimed.id, projectId: claimed.projectId, sessionId, leaseToken: claimed.leaseToken,
       reminders: 0, lastBeat: Date.now(),
     });
+  }
+
+  /** Change the reasoning effort on the existing session through DSH's session-local model selection. */
+  private async applyEffort(sessionId: string, effort: 'normal' | 'max') {
+    try {
+      const controller = this.ctx.get('sessionController') as any;
+      if (!controller || typeof controller.selectModel !== 'function') return;
+      const found = await controller.resolveAgent(sessionId);
+      if (!found || 'error' in found) return;
+      const events = found.agent?.session?.snapshotEvents?.() ?? [];
+      let route: { provider: string; model: string } | undefined;
+      for (let i = events.length - 1; i >= 0; i--) {
+        const header = events[i]?.type === 'request/header' ? events[i]?.data?.header : undefined;
+        const config = header?.config;
+        if (typeof config?.provider === 'string' && typeof config?.model === 'string') { route = { provider: config.provider, model: config.model }; break; }
+      }
+      const llm = this.ctx.get('llm') as any;
+      if (!route && llm?.listProviders) {
+        // A brand-new session has no request yet: use the catalog only when it is unambiguous.
+        const providers = await Promise.resolve(llm.listProviders());
+        const candidates: Array<{ provider: string; model: string }> = [];
+        for (const provider of providers ?? []) {
+          const models = await Promise.resolve(llm.listModels(provider.id));
+          for (const model of models ?? []) candidates.push({ provider: provider.id, model: model.id ?? model.name });
+        }
+        if (candidates.length === 1) route = candidates[0];
+      }
+      if (!route) return;
+      let target: string | undefined;
+      const info = typeof llm?.resolveModelInfo === 'function' ? await Promise.resolve(llm.resolveModelInfo(route.provider, route.model)).catch(() => null) : null;
+      const efforts = info?.reasoning?.efforts ?? [];
+      if (effort === 'max') target = efforts.find((item: any) => item.id === 'max')?.id ?? efforts.at?.(-1)?.id;
+      else target = info?.reasoning?.defaultEffort ?? efforts.find((item: any) => item.id === 'medium' || item.id === 'high')?.id;
+      if (effort === 'max' && !target) return;
+      await Promise.resolve(controller.selectModel({ sessionId, provider: route.provider, model: route.model, ...(target ? { reasoningEffort: target } : {}) }));
+    } catch (error) {
+      this.ctx.logger?.warn?.('vishvakarma chat: не удалось переключить effort: ' + String(error));
+    }
   }
 
   /** Compact user-facing trace of what the agent did in this turn; never raw reasoning. */

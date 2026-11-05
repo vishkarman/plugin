@@ -22,7 +22,9 @@ export const ChatContext = Type.Object({
 }, { additionalProperties: false });
 export type ChatContextValue = Static<typeof ChatContext>;
 
+export const ChatEffort = Type.Union([Type.Literal('normal'), Type.Literal('max')]);
 export const ChatSend = Type.Object({
+  effort: Type.Optional(ChatEffort),
   message: Type.String({ minLength: 1, maxLength: CHAT_MESSAGE_MAX }),
   context: ChatContext,
   idempotencyKey: Uuid,
@@ -91,7 +93,7 @@ export interface ChatState {
 }
 export interface AgentChatRequest {
   id: string; messageId: string; message: string; projectId: string; context: ChatContextValue;
-  expiresAt: string; status: ChatRequestStatus;
+  expiresAt: string; status: ChatRequestStatus; effort: 'normal' | 'max';
 }
 export interface AgentChatClaim extends AgentChatRequest { leaseToken: string; reconcile: boolean }
 export interface AgentChatHistory { items: ChatMessage[] }
