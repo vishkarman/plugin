@@ -12,6 +12,7 @@ import { API_VERSION, CAPABILITY, type ServerInfo, type ProjectContext, type Sav
 import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, WORKSPACE_CAPABILITY, type ProjectCreateInput, type ProjectUpdateInput, type AssetUploadInput, type AdapterExample, type AdapterProjectContext, type AdapterChangeInput, type AdapterSavedChange, type AdapterChangeCheck, type ChangeConflict, type SourcePathName, type ExampleKey } from '../contracts/adapters.js';
 import type { BuildInfo } from '../contracts/runner.js';
 import { ACCOUNT_CAPABILITY, type AuthUser, type ProjectAccess } from '../contracts/access.js';
+import type { SelectionSnapshot } from '../contracts/selection.js';
 import { missingCapabilities } from './server-capabilities.js';
 
 FormatRegistry.Set('uuid',value=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
@@ -20,6 +21,13 @@ export interface Config { serverUrl: string; credentialsFile: string }
 export interface Credentials { origin: string; installationId: string; token: string; tokenId: string }
 interface ConflictDetails { baseRevisionId?: string; conflicts?: ChangeConflict[] }
 export interface AdapterChangeOptions { action?: 'check' | 'apply'; operationId?: string }
+/** Old servers have no selection route; every other failure is reported, not hidden. */
+export type SelectionResult = SelectionSnapshot | { supported: false };
+function validSelectionRecord(value: any): boolean {
+  return !!value && value.version === 1 && value.kind === 'selection'
+    && typeof value.projectId === 'string' && typeof value.revisionId === 'string'
+    && (value.targetId === null || typeof value.targetId === 'string') && typeof value.capturedAt === 'string';
+}
 export class ConnectionError extends Error {
   constructor(readonly code: string, message: string, readonly revisionId?: string, readonly operationId?: string,
     readonly details: ConflictDetails = {}) { super(message); }
@@ -147,6 +155,21 @@ export class Connection {
     if (result.projectId !== 'demo' || !id(result.revisionId) || result.resource?.path !== 'index.html' || typeof result.resource?.content !== 'string')
       throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый контекст.');
     return result;
+  }
+  async selection(signal?: AbortSignal): Promise<SelectionResult> {
+    const { token } = await this.credentials(signal);
+    try {
+      const result = await request<SelectionSnapshot>(this.origin, '/api/v1/account/selection', token, undefined, signal);
+      if (result?.supported !== true || typeof result.account?.username !== 'string' || typeof result.account?.displayName !== 'string'
+        || (result.selection !== null && !validSelectionRecord(result.selection))
+        || (result.access !== null && typeof result.access?.canUseAgent !== 'boolean'))
+        throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый снимок выделения.');
+      return result;
+    } catch (error) {
+      // Only a missing route means the old server; PROJECT_NOT_FOUND and transport failures stay visible.
+      if (error instanceof ConnectionError && error.code === 'NOT_FOUND') return { supported: false };
+      throw error;
+    }
   }
   async change(baseRevisionId: string, text: string, signal?: AbortSignal): Promise<SavedChange> {
     if (!id(baseRevisionId) || [...text].length > 4096) throw new ConnectionError('INVALID_REQUEST', 'Нужна исходная UUID-ревизия и текст длиной до 4096 символов.');

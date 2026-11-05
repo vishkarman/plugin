@@ -15,6 +15,7 @@ import { Button } from './ui/button.js';
 import { Alert } from './ui/alert.js';
 import { installStyles } from './ui/styles.js';
 import { ReloadStudioDialog } from './reload-view.js';
+import { selectionDockView } from './selection-dock.js';
 
 const panelId = 'vishvakarma' as MainPanelId;
 export const inject = ['remote', 'commandUi', 'layout', 'slots'];
@@ -58,6 +59,11 @@ function registerWorkspace(ctx: Context) {
     name: 'vishvakarma', label: () => 'Открыть Vishvakarma', description: () => 'Рабочая область дизайн-проектов',
     available: () => true, ui: { kind: 'action', run: () => { ctx.layout.selectPanel(panelId); } },
   });
+  // Stage A: the selected object is published by Studio; this dock entry inserts its compact context
+  // into the DSH draft. Without a selection or on an old server the entry renders nothing.
+  ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+    name: 'conversation.composer.dock', id: 'vishvakarma-selection', order: 10,
+  }, selectionDockView(ctx)));
   function Studio() {
     const bounds = useSyncExternalStore(subscribe, () => surface);
     const [opened, setOpened] = useState(false);

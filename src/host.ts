@@ -10,8 +10,9 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { Connection, defaultCredentialsFile, serverInfo, type Config as ConnectionConfig } from './connection.js';
-import { studioRemote, type StudioConnection } from './remote.js';
+import { studioRemote, type SelectionRemote, type StudioConnection } from './remote.js';
 import { registerAdapterTools } from './adapter-tools.js';
+import { registerSelectionTools } from './selection-tools.js';
 import { output, run } from './tool-output.js';
 import { PluginUpdates } from './updates.js';
 import type { UpdateNotice, UpdateSettings, UpdateStatus } from './update-contract.js';
@@ -30,6 +31,8 @@ class StudioService extends TypertRemoteService {
     try { await serverInfo(this.connection.origin); return { url: this.connection.origin, available: true, message: '' }; }
     catch { return { url: this.connection.origin, available: false, message: 'Сервер Vishvakarma недоступен или несовместим. Запустите сервер и проверьте serverUrl.' }; }
   }
+  @Remote
+  async selection(): Promise<SelectionRemote> { return this.connection.selection(); }
   @Remote
   async updateStatus(): Promise<UpdateStatus> { return this.updates.status(); }
   @Remote
@@ -61,6 +64,7 @@ export function apply(ctx: Context, config: ConnectionConfig) {
     execute: async (args, exec) => run(() => connection.change(args.baseRevisionId, args.text, exec.signal)),
   }));
   registerAdapterTools(ctx, connection);
+  registerSelectionTools(ctx, connection);
   registerProductTools(ctx, connection);
   registerEditorTools(ctx, connection);
   const skillDir = fileURLToPath(new URL('../skills/vishvakarma/', import.meta.url));
