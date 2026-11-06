@@ -64,7 +64,7 @@ export class ChatBridge {
         }
         if (event?.type === 'tool/call') {
           state.toolCalls += 1;
-          this.publishActivity(key, String(event.data?.name ?? ''));
+          this.publishActivity(key, String(event.data?.name ?? ''), String(event.data?.arguments ?? ''));
         }
       }
       state.seen = events.length;
@@ -226,7 +226,7 @@ export class ChatBridge {
   }
 
   /** Send one throttled, factual line about the current tool action. */
-  private publishActivity(sessionId: string, toolName: string) {
+  private publishActivity(sessionId: string, toolName: string, args = '') {
     try {
       const bare = sessionId.replace(/^session-/, '');
       const work = [...this.active.values()].find(item => item.sessionId === sessionId || item.sessionId.replace(/^session-/, '') === bare);
@@ -241,9 +241,11 @@ export class ChatBridge {
       };
       const label = labels[toolName];
       if (!label) return;
-      if (label === work.lastActivity && Date.now() - (work.lastActivityAt ?? 0) < 2500) return;
-      work.lastActivity = label; work.lastActivityAt = Date.now();
-      void this.connection.chatActivity(work.requestId, work.leaseToken, work.sessionId, label).catch(() => {});
+      const waiting = toolName === 'bash' && /sleep\s+\d+|wait\s+for|подожд/i.test(args);
+      const next = waiting ? 'ждёт субагента' : label;
+      if (next === work.lastActivity && Date.now() - (work.lastActivityAt ?? 0) < 2500) return;
+      work.lastActivity = next; work.lastActivityAt = Date.now();
+      void this.connection.chatActivity(work.requestId, work.leaseToken, work.sessionId, next).catch(() => {});
     } catch { /* activity is advisory */ }
   }
 
@@ -334,11 +336,48 @@ export class ChatBridge {
     } catch { return []; }
   }
 
+  private async resolveAgentAny(sessionId: string) {
+    const controller = this.ctx.get('sessionController') as any;
+    if (!controller?.resolveAgent) return null;
+    const bare = sessionId.replace(/^session-/, '');
+    for (const candidate of [sessionId, bare, 'session-' + bare]) {
+      try {
+        const found = await controller.resolveAgent(candidate);
+        if (found && !('error' in found)) return found;
+      } catch { /* try the next identity form */ }
+    }
+    return null;
+  }
+
+  /** Child subagent sessions started from a parent turn, read from the durable catalog. */
+  private childSessions(sessionId: string): string[] {
+    try {
+      const agents = this.ctx.get('agents') as any;
+      const bare = sessionId.replace(/^session-/, '');
+      const agent = agents?.get?.(sessionId) ?? agents?.get?.(bare) ?? agents?.get?.('session-' + bare);
+      const events = agent?.session?.snapshotEvents?.() ?? [];
+      const ids = new Set<string>();
+      for (const event of events) {
+        if (event?.type === 'subagent/catalog' && event.data?.childId) ids.add(String(event.data.childId));
+        if (event?.type === 'tool/result') {
+          const text = JSON.stringify(event.data?.message?.content ?? '');
+          for (const match of text.matchAll(/started subagent ([0-9a-f-]{36})/g)) ids.add(match[1]);
+        }
+      }
+      return [...ids];
+    } catch { return []; }
+  }
+
   /** Feature-detect the live agent cancellation surface across DSH builds. */
   private async stopAgent(sessionId: string) {
     try {
       const controller = this.ctx.get('sessionController') as any;
-      const found = await controller?.resolveAgent?.(sessionId);
+      for (const child of this.childSessions(sessionId)) {
+        for (const candidate of [child, 'session-' + child.replace(/^session-/, '')]) {
+          try { await this.stopAgent(candidate); } catch { /* child is optional */ }
+        }
+      }
+      const found = await this.resolveAgentAny(sessionId);
       const agent = found && !('error' in found) ? found.agent : null;
       const names = ['interrupt', 'abort', 'cancelTurn', 'abortTurn', 'interruptTurn', 'stopTurn', 'cancel', 'stop'];
       for (const target of [agent, agent?.session]) {
