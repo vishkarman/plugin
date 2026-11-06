@@ -228,7 +228,8 @@ export class ChatBridge {
   /** Send one throttled, factual line about the current tool action. */
   private publishActivity(sessionId: string, toolName: string) {
     try {
-      const work = [...this.active.values()].find(item => item.sessionId === sessionId);
+      const bare = sessionId.replace(/^session-/, '');
+      const work = [...this.active.values()].find(item => item.sessionId === sessionId || item.sessionId.replace(/^session-/, '') === bare);
       if (!work) return;
       const labels: Record<string, string> = {
         vishvakarma_adapter_project: 'читает проект', read_image: 'смотрит изображения', bash: 'выполняет команды',
