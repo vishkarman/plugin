@@ -12,6 +12,7 @@ import { parse } from 'yaml';
 import { Connection, defaultCredentialsFile, serverInfo, type Config as ConnectionConfig } from './connection.js';
 import { studioRemote, type SelectionRemote, type StudioConnection } from './remote.js';
 import { registerAdapterTools } from './adapter-tools.js';
+import { registerTargetTools } from './target-tools.js';
 import { registerSelectionTools } from './selection-tools.js';
 import { ChatBridge } from './chat-bridge.js';
 import { registerChatTools } from './chat-tools.js';
@@ -86,6 +87,7 @@ export function apply(ctx: Context, config: ConnectionConfig & MediaConfig) {
     execute: async (args, exec) => run(() => connection.change(args.baseRevisionId, args.text, exec.signal)),
   }));
   registerAdapterTools(ctx, connection);
+  registerTargetTools(ctx, connection);
   registerSelectionTools(ctx, connection);
   registerProductTools(ctx, connection);
   registerEditorTools(ctx, connection);
