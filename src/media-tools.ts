@@ -38,6 +38,7 @@ const generateOutput = {
     assets: { type: 'array', items: assetSchema },
     replaced: { type: 'boolean' },
     costUsd: { type: 'number' },
+    studioUrl: { type: 'string' },
     preview: previewSchema,
     error: {
       type: 'object', additionalProperties: false,
