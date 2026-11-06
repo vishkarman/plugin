@@ -236,6 +236,7 @@ export class ChatBridge {
         write: 'меняет исходники', patch: 'меняет исходники', edit: 'меняет исходники',
         vishvakarma_write_files: 'меняет исходники', vishvakarma_editor: 'меняет исходники', vishvakarma_edit_target: 'меняет исходники',
         vishvakarma_preview: 'проверяет предпросмотр', vishvakarma_build: 'проверяет сборку',
+        vishvakarma_generate_image: 'генерирует изображение', vishvakarma_media_profiles: 'смотрит профили генерации',
         subagent: 'запускает субагента', todo_write: 'обновляет план', list_agents: 'координирует субагентов', send_message: 'координирует субагентов',
       };
       const label = labels[toolName];
@@ -321,6 +322,7 @@ export class ChatBridge {
         vishvakarma_preview: 'проверил предпросмотр', vishvakarma_build: 'проверил сборку',
         subagent: 'запустил субагента', todo_write: 'обновил план', list_agents: 'координировал субагентов', send_message: 'координировал субагентов',
         vishvakarma_history: 'посмотрел историю версий', vishvakarma_comments: 'посмотрел обсуждения',
+        vishvakarma_generate_image: 'сгенерировал изображение', vishvakarma_media_profiles: 'посмотрел профили генерации',
       };
       for (const event of events.slice(start)) {
         if (event?.type !== 'tool/call') continue;

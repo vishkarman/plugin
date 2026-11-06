@@ -18,16 +18,23 @@ import { registerChatTools } from './chat-tools.js';
 import { output, run } from './tool-output.js';
 import { PluginUpdates } from './updates.js';
 import type { UpdateNotice, UpdateSettings, UpdateStatus } from './update-contract.js';
+import { MediaService } from './media-service.js';
+import { registerMediaTools } from './media-tools.js';
+import type { GenerateMediaRequest, GenerateMediaResult, MediaProfileSummary, MediaSettings } from './media-contract.js';
+import type { MediaConfig } from './media-profiles.js';
 
 export const name = 'vishvakarma';
 export const inject = ['tools', 'skills', 'typert'];
 export const Config = Schema.object({
   serverUrl: Schema.string().default('http://127.0.0.1:3000').description('Loopback origin Studio; при изменении подключитесь заново.'),
   credentialsFile: Schema.string().default(defaultCredentialsFile).description('Абсолютный путь к приватному JSON подключения; токен не помещайте в конфигурацию DSH.'),
+  imageApiKeyEnv: Schema.string().default('OPENROUTER_API_KEY').description('Credential reference ключа OpenRouter; значение вводится в DSH Settings → Models, не в env.'),
+  mediaDraftModel: Schema.string().default('google/gemini-2.5-flash-image').description('Модель OpenRouter для профиля core:draft.'),
+  mediaFinalModel: Schema.string().default('google/gemini-3-pro-image').description('Модель OpenRouter для профиля core:final.'),
 });
 class StudioService extends TypertRemoteService {
   private readonly updates: PluginUpdates;
-  constructor(ctx: Context, private readonly connection: Connection, config: ConnectionConfig) { super(ctx, 'vishvakarma'); this.updates = new PluginUpdates(ctx, config); }
+  constructor(ctx: Context, private readonly connection: Connection, config: ConnectionConfig, private readonly media: MediaService) { super(ctx, 'vishvakarma'); this.updates = new PluginUpdates(ctx, config); }
   @Remote
   async studio(): Promise<StudioConnection> {
     try { await serverInfo(this.connection.origin); return { url: this.connection.origin, available: true, message: '' }; }
@@ -35,6 +42,12 @@ class StudioService extends TypertRemoteService {
   }
   @Remote
   async selection(): Promise<SelectionRemote> { return this.connection.selection(); }
+  @Remote
+  async mediaSettings(): Promise<MediaSettings> { return this.media.settings(); }
+  @Remote
+  async mediaProfiles(): Promise<MediaProfileSummary[]> { return this.media.profiles(); }
+  @Remote
+  async generateMedia(input: GenerateMediaRequest): Promise<GenerateMediaResult> { return (await this.media.generateFromSelection(input, AbortSignal.timeout(300_000))).result; }
   @Remote
   async updateStatus(): Promise<UpdateStatus> { return this.updates.status(); }
   @Remote
@@ -48,9 +61,10 @@ class StudioService extends TypertRemoteService {
   @Remote
   async updatePlugin(): Promise<UpdateStatus> { return this.updates.start('update'); }
 }
-export function apply(ctx: Context, config: ConnectionConfig) {
+export function apply(ctx: Context, config: ConnectionConfig & MediaConfig) {
   const connection = new Connection(config);
-  new StudioService(ctx, connection, config);
+  const media = new MediaService(ctx, connection, config);
+  new StudioService(ctx, connection, config, media);
   ctx.typert.remotes.register(studioRemote);
   const chatBridge = new ChatBridge(ctx, connection, config.credentialsFile);
   ctx.effect(() => chatBridge.start());
@@ -74,6 +88,7 @@ export function apply(ctx: Context, config: ConnectionConfig) {
   registerSelectionTools(ctx, connection);
   registerProductTools(ctx, connection);
   registerEditorTools(ctx, connection);
+  registerMediaTools(ctx, media);
   const skillDir = fileURLToPath(new URL('../skills/vishvakarma/', import.meta.url));
   const skillPath = skillDir + 'SKILL.md';
   ctx.skills.registerProvider(() => ({

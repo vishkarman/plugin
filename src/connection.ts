@@ -15,6 +15,7 @@ import { ACCOUNT_CAPABILITY, type AuthUser, type ProjectAccess } from '../contra
 import type { SelectionSnapshot } from '../contracts/selection.js';
 import type { AgentChatClaim, AgentChatHistory, AgentChatRequest, ChatMessage } from '../contracts/chat.js';
 import { missingCapabilities } from './server-capabilities.js';
+import { MEDIA_CAPABILITY, type MediaSettings } from './media-contract.js';
 
 FormatRegistry.Set('uuid',value=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 export const defaultCredentialsFile = join(homedir(), 'Library/Application Support/Vishvakarma/dev/config/plugin-credentials.json');
@@ -172,6 +173,43 @@ export class Connection {
       throw error;
     }
   }
+  /** Платформенная настройка ручного режима; старый сервер означает только agent. */
+  async mediaSettings(signal?: AbortSignal): Promise<MediaSettings> {
+    const { token, capabilities } = await this.credentials(signal);
+    if (!capabilities.includes(MEDIA_CAPABILITY)) return { manualGenerationMode: 'agent', supported: false };
+    try {
+      const result = await request<{ manualGenerationMode?: unknown }>(this.origin, '/api/v1/platform/media', token, undefined, signal);
+      const mode = result?.manualGenerationMode;
+      if (mode !== 'agent' && mode !== 'direct')
+        throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемую настройку генерации.');
+      return { manualGenerationMode: mode, supported: true };
+    } catch (error) {
+      if (error instanceof ConnectionError && error.code === 'NOT_FOUND') return { manualGenerationMode: 'agent', supported: false };
+      throw error;
+    }
+  }
+
+  /** Байты ресурса проекта для input_references; без base64 в контексте агента. */
+  async assetBytes(projectId: string, hash: string, revisionId?: string, signal?: AbortSignal): Promise<{ bytes: Buffer; mime: string }> {
+    if (!projectKey(projectId) || !/^[a-f0-9]{64}$/.test(hash)) throw new ConnectionError('INVALID_REQUEST', 'Нужен проект и SHA-256 ресурса.');
+    const { token } = await this.credentials(signal);
+    const url = this.origin + '/api/v1/adapters/projects/' + encodeURIComponent(projectId) + '/assets/' + hash
+      + (revisionId ? '?revisionId=' + encodeURIComponent(revisionId) : '');
+    let response: Response;
+    try {
+      response = await fetch(url, { redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
+        headers: { Authorization: 'Bearer ' + token } });
+    } catch {
+      throw new ConnectionError('TRANSPORT', 'Не удалось прочитать ресурс проекта для генерации.');
+    }
+    if (!response.ok) throw new ConnectionError(response.status === 404 ? 'ASSET_NOT_FOUND' : 'TRANSPORT', 'Ресурс проекта недоступен для генерации.');
+    const mime = (response.headers.get('content-type') || '').split(';')[0].toLowerCase();
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 8 * 1024 * 1024 || !['image/png', 'image/jpeg', 'image/webp'].includes(mime))
+      throw new ConnectionError('ASSET_INVALID', 'Источник должен быть PNG/JPEG/WebP до 8 МиБ.');
+    return { bytes, mime };
+  }
+
   async change(baseRevisionId: string, text: string, signal?: AbortSignal): Promise<SavedChange> {
     if (!id(baseRevisionId) || [...text].length > 4096) throw new ConnectionError('INVALID_REQUEST', 'Нужна исходная UUID-ревизия и текст длиной до 4096 символов.');
     const { token } = await this.credentials(signal);

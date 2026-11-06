@@ -2,6 +2,10 @@ import type { TypertRemoteContribution, RemoteResult } from '@deepseek-ai/dsh-ty
 import { z } from 'zod';
 import { updateNoticeSchema, updateSettingsSchema, updateStatusSchema, type UpdateNotice, type UpdateSettings, type UpdateStatus } from './update-contract.js';
 import type { SelectionSnapshot } from '../contracts/selection.js';
+import {
+  generateMediaRequestSchema, generateMediaResultSchema, mediaProfileSummarySchema, mediaSettingsSchema,
+  type GenerateMediaRequest, type GenerateMediaResult, type MediaProfileSummary, type MediaSettings,
+} from './media-contract.js';
 export interface StudioConnection { url: string; available: boolean; message: string }
 /** `supported:false` is the documented old-server fallback, never an error. */
 export type SelectionRemote = SelectionSnapshot | { supported: false };
@@ -35,6 +39,19 @@ export const studioRemote: TypertRemoteContribution = {
     invocation: { kind: 'direct' }, parameters: [],
     result: { mode: 'strict', typeSymbol: 'SelectionSnapshot', create: () => z.union([selectionSnapshotSchema, selectionUnsupportedSchema]) },
   }, {
+    id: 'vishvakarma/mediaSettings', service: 'vishvakarma', namespace: 'vishvakarma', method: 'mediaSettings',
+    invocation: { kind: 'direct' }, parameters: [],
+    result: { mode: 'strict', typeSymbol: 'MediaSettings', create: () => mediaSettingsSchema },
+  }, {
+    id: 'vishvakarma/mediaProfiles', service: 'vishvakarma', namespace: 'vishvakarma', method: 'mediaProfiles',
+    invocation: { kind: 'direct' }, parameters: [],
+    result: { mode: 'strict', typeSymbol: 'MediaProfileSummary[]', create: () => z.array(mediaProfileSummarySchema) },
+  }, {
+    id: 'vishvakarma/generateMedia', service: 'vishvakarma', namespace: 'vishvakarma', method: 'generateMedia',
+    invocation: { kind: 'direct' },
+    parameters: [{ name: 'input', wire: 'input', source: 'json', codec: { mode: 'strict', typeSymbol: 'GenerateMediaRequest', create: () => generateMediaRequestSchema } }],
+    result: { mode: 'strict', typeSymbol: 'GenerateMediaResult', create: () => generateMediaResultSchema },
+  }, {
     id: 'vishvakarma/updateNotice', service: 'vishvakarma', namespace: 'vishvakarma', method: 'updateNotice',
     invocation: { kind: 'direct' }, parameters: [],
     result: { mode: 'strict', typeSymbol: 'UpdateNotice', create: () => updateNoticeSchema },
@@ -49,6 +66,9 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteMap {
     'vishvakarma/studio': () => Promise<RemoteResult<StudioConnection>>;
     'vishvakarma/selection': () => Promise<RemoteResult<SelectionRemote>>;
+    'vishvakarma/mediaSettings': () => Promise<RemoteResult<MediaSettings>>;
+    'vishvakarma/mediaProfiles': () => Promise<RemoteResult<MediaProfileSummary[]>>;
+    'vishvakarma/generateMedia': (input: GenerateMediaRequest) => Promise<RemoteResult<GenerateMediaResult>>;
     'vishvakarma/updateStatus': () => Promise<RemoteResult<UpdateStatus>>;
     'vishvakarma/updateNotice': () => Promise<RemoteResult<UpdateNotice>>;
     'vishvakarma/checkUpdate': () => Promise<RemoteResult<UpdateStatus>>;
