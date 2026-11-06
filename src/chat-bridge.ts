@@ -31,6 +31,7 @@ export class ChatBridge {
   private bindings: Record<string, string> = {};
   private readonly active = new Map<string, ActiveWork>();
   private readonly sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps: number; toolCalls: number; seen: number }>();
+  private readonly childParents = new Map<string, string>();
   private instanceId = '';
   private accountId = '';
   private busy = false;
@@ -61,6 +62,11 @@ export class ChatBridge {
           state.outputTokens += Number(used.outputTokens) || 0;
           state.cacheReadTokens += Number(used.cacheReadTokens) || 0;
           state.cacheWriteTokens += Number(used.cacheWriteTokens) || 0;
+        }
+        if (event?.type === 'subagent/catalog' && event.data?.childId) this.childParents.set(String(event.data.childId).replace(/^session-/, ''), key);
+        if (event?.type === 'tool/result') {
+          const started = JSON.stringify(event.data?.message?.content ?? '');
+          for (const match of started.matchAll(/started subagent ([0-9a-f-]{36})/g)) this.childParents.set(match[1], key);
         }
         if (event?.type === 'tool/call') {
           state.toolCalls += 1;
@@ -225,16 +231,24 @@ export class ChatBridge {
     }
   }
 
-  /** Send one throttled, factual line about the current tool action. */
+  /** Send one throttled, factual line about the current tool action, including child subagents. */
   private publishActivity(sessionId: string, toolName: string, args = '') {
     try {
       const bare = sessionId.replace(/^session-/, '');
-      const work = [...this.active.values()].find(item => item.sessionId === sessionId || item.sessionId.replace(/^session-/, '') === bare);
+      let work = [...this.active.values()].find(item => item.sessionId.replace(/^session-/, '') === bare);
+      let prefix = '';
+      if (!work) {
+        const parent = this.childParents.get(bare);
+        if (!parent) return;
+        work = [...this.active.values()].find(item => item.sessionId.replace(/^session-/, '') === parent);
+        prefix = 'субагент: ';
+      }
       if (!work) return;
       const labels: Record<string, string> = {
         vishvakarma_adapter_project: 'читает проект', read_image: 'смотрит изображения', bash: 'выполняет команды',
         write: 'меняет исходники', patch: 'меняет исходники', edit: 'меняет исходники',
         vishvakarma_write_files: 'меняет исходники', vishvakarma_editor: 'меняет исходники', vishvakarma_edit_target: 'меняет исходники',
+        vishvakarma_import_files: 'публикует файлы',
         vishvakarma_preview: 'проверяет предпросмотр', vishvakarma_build: 'проверяет сборку',
         vishvakarma_generate_image: 'генерирует изображение', vishvakarma_media_profiles: 'смотрит профили генерации',
         subagent: 'запускает субагента', todo_write: 'обновляет план', list_agents: 'координирует субагентов', send_message: 'координирует субагентов',
@@ -242,7 +256,7 @@ export class ChatBridge {
       const label = labels[toolName];
       if (!label) return;
       const waiting = toolName === 'bash' && /sleep\s+\d+|wait\s+for|подожд/i.test(args);
-      const next = waiting ? 'ждёт субагента' : label;
+      const next = prefix + (waiting ? (prefix ? 'ждёт завершения' : 'ждёт субагента') : label);
       if (next === work.lastActivity && Date.now() - (work.lastActivityAt ?? 0) < 2500) return;
       work.lastActivity = next; work.lastActivityAt = Date.now();
       void this.connection.chatActivity(work.requestId, work.leaseToken, work.sessionId, next).catch(() => {});
