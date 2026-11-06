@@ -15,7 +15,7 @@ import { ACCOUNT_CAPABILITY, type AuthUser, type ProjectAccess } from '../contra
 import type { SelectionSnapshot } from '../contracts/selection.js';
 import type { AgentChatClaim, AgentChatHistory, AgentChatRequest, ChatMessage } from '../contracts/chat.js';
 import { missingCapabilities } from './server-capabilities.js';
-import { MEDIA_CAPABILITY, type MediaSettings } from './media-contract.js';
+import { MEDIA_CAPABILITY, MEDIA_PROFILES_CAPABILITY, serverMediaProfileSchema, type MediaSettings, type ServerMediaProfile } from './media-contract.js';
 
 FormatRegistry.Set('uuid',value=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 export const defaultCredentialsFile = join(homedir(), 'Library/Application Support/Vishvakarma/dev/config/plugin-credentials.json');
@@ -185,6 +185,26 @@ export class Connection {
       return { manualGenerationMode: mode, supported: true };
     } catch (error) {
       if (error instanceof ConnectionError && error.code === 'NOT_FOUND') return { manualGenerationMode: 'agent', supported: false };
+      throw error;
+    }
+  }
+
+  /** Каталог профилей, настроенный администратором платформы; без него работают встроенные. */
+  async mediaProfiles(signal?: AbortSignal): Promise<{ supported: boolean; profiles: ServerMediaProfile[] }> {
+    const { token, capabilities } = await this.credentials(signal);
+    if (!capabilities.includes(MEDIA_PROFILES_CAPABILITY)) return { supported: false, profiles: [] };
+    try {
+      const result = await request<{ profiles?: unknown }>(this.origin, '/api/v1/platform/media/profiles', token, undefined, signal);
+      if (!Array.isArray(result?.profiles)) throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый каталог профилей.');
+      const profiles: ServerMediaProfile[] = [];
+      for (const candidate of result.profiles) {
+        const parsed = serverMediaProfileSchema.safeParse(candidate);
+        if (!parsed.success) throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый профиль генерации.');
+        profiles.push(parsed.data);
+      }
+      return { supported: true, profiles };
+    } catch (error) {
+      if (error instanceof ConnectionError && error.code === 'NOT_FOUND') return { supported: false, profiles: [] };
       throw error;
     }
   }

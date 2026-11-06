@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { MediaService } from './media-service.js';
 import { MediaError } from './media-provider.js';
-import { DEFAULT_PROFILE_ID, profileIds } from './media-profiles.js';
+import { DEFAULT_PROFILE_ID } from './media-profiles.js';
 import { output } from './tool-output.js';
 
 const assetSchema = {
@@ -117,7 +117,8 @@ export function registerMediaTools(ctx: Context, media: MediaService) {
     name: 'vishvakarma_media_profiles',
     description: 'Показать доступные профили генерации изображений: когда применять, модель, разрешение, примерную цену и настроен ли ключ. '
       + 'Вызывай перед использованием не-дефолтного профиля или когда пользователь называет профиль. '
-      + `Сейчас доступны встроенные профили (${profileIds()}); профили администратора и пользователя появятся позже.`,
+      + 'Каталог и модели настраивает администратор платформы в Studio → Администрирование → Генерация; '
+      + 'если настройки нет, используются встроенные core:draft и core:final.',
     parameters: {},
     output,
     isConcurrencySafe: () => true,

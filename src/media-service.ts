@@ -3,8 +3,8 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { AdapterProjectContext, SourceAsset } from '../contracts/adapters.js';
 import { Connection, ConnectionError } from './connection.js';
 import { MediaError, generateImages, type ImageReference, type ProviderImage } from './media-provider.js';
-import { DEFAULT_PROFILE_ID, builtinProfiles, findProfile, profileIds, type MediaConfig, type MediaProfile } from './media-profiles.js';
-import type { GenerateMediaRequest, GenerateMediaResult, GeneratedMediaAsset, MediaProfileSummary, MediaSettings } from './media-contract.js';
+import { DEFAULT_PROFILE_ID, builtinProfiles, type MediaConfig, type MediaProfile } from './media-profiles.js';
+import type { GenerateMediaRequest, GenerateMediaResult, GeneratedMediaAsset, MediaProfileSummary, MediaSettings, ServerMediaProfile } from './media-contract.js';
 
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
@@ -57,13 +57,34 @@ export class MediaService {
 
   /** Каталог профилей; секретов здесь нет, только статус «настроен». */
   async profiles(): Promise<MediaProfileSummary[]> {
-    const profiles = builtinProfiles(this.config);
+    const profiles = await this.catalog();
     return await Promise.all(profiles.map(async profile => ({
       id: profile.id, title: profile.title, description: profile.description,
       model: profile.model, resolution: profile.resolution, costHintUsd: profile.costHintUsd,
       explicitOnly: profile.explicitOnly, configured: await this.credentialConfigured(profile),
       available: true,
     })));
+  }
+
+  /** Администратор платформы задаёт каталог профилей на сервере; встроенные — запасной вариант. */
+  private async catalog(signal?: AbortSignal): Promise<MediaProfile[]> {
+    try {
+      const remote = await this.connection.mediaProfiles(signal);
+      if (remote.supported && remote.profiles.length) {
+        const profiles = remote.profiles.map(profile => this.fromServer(profile));
+        if (profiles.some(profile => profile.id === DEFAULT_PROFILE_ID)) return profiles;
+      }
+    } catch { /* старая установка или недоступный каталог: встроенные профили */ }
+    return builtinProfiles(this.config);
+  }
+
+  private fromServer(profile: ServerMediaProfile): MediaProfile {
+    return {
+      ...profile,
+      provider: 'openrouter',
+      credential: this.config.imageApiKeyEnv || 'OPENROUTER_API_KEY',
+      scope: 'installation',
+    };
   }
 
   async settings(signal?: AbortSignal): Promise<MediaSettings> {
@@ -91,8 +112,9 @@ export class MediaService {
   async generate(input: GenerateInput, signal: AbortSignal): Promise<MediaGenerationOutcome> {
     if (!input.prompt.trim()) throw new MediaError('INVALID_REQUEST', 'Нужен непустой промпт.');
     if ([...input.prompt].length > 4000) throw new MediaError('INVALID_REQUEST', 'Промпт длиннее 4000 символов.');
-    const profile = findProfile(input.profileId, this.config);
-    if (!profile) throw new MediaError('PROFILE_UNKNOWN', `Профиль «${input.profileId ?? ''}» не найден.`, `Доступны: ${profileIds(this.config)}.`);
+    const catalog = await this.catalog(signal);
+    const profile = catalog.find(item => item.id === (input.profileId || DEFAULT_PROFILE_ID));
+    if (!profile) throw new MediaError('PROFILE_UNKNOWN', `Профиль «${input.profileId ?? ''}» не найден.`, `Доступны: ${catalog.map(item => item.id).join(', ')}.`);
     const apiKey = await this.resolveCredential(profile);
     const context = await this.connection.adapterProject(input.projectId, false, undefined, signal);
     if (input.sourceAsset) {

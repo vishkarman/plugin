@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 /** Строка-идентификатор опциональной серверной возможности; повторяет server/contracts/media.ts. */
 export const MEDIA_CAPABILITY = 'media.generation.v1';
+export const MEDIA_PROFILES_CAPABILITY = 'media.profiles.v1';
 
 export const MANUAL_GENERATION_MODES = ['agent', 'direct'] as const;
 export type ManualGenerationMode = (typeof MANUAL_GENERATION_MODES)[number];
@@ -35,6 +36,26 @@ export const mediaProfileSummarySchema = z.object({
   id: z.string(), title: z.string(), description: z.string(), model: z.string(),
   resolution: z.string().nullable(), costHintUsd: z.number().nullable(),
   explicitOnly: z.boolean(), configured: z.boolean(), available: z.boolean(),
+}).strict();
+
+/** Профиль в каталоге сервера: без credential и без провайдерских секретов. */
+export interface ServerMediaProfile {
+  id: string;
+  title: string;
+  description: string;
+  model: string;
+  resolution: string | null;
+  maxCount: number;
+  timeoutMs: number;
+  costHintUsd: number | null;
+  explicitOnly: boolean;
+  promptSuffix: string;
+}
+
+export const serverMediaProfileSchema = z.object({
+  id: z.string(), title: z.string(), description: z.string(), model: z.string(),
+  resolution: z.string().nullable(), maxCount: z.number().int(), timeoutMs: z.number().int(),
+  costHintUsd: z.number().nullable(), explicitOnly: z.boolean(), promptSuffix: z.string(),
 }).strict();
 
 /** Запрос прямой генерации из панели DSH; проект и выделение Host читает сам. */

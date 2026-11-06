@@ -8,7 +8,7 @@ import { ACCESS_CAPABILITY, ACCOUNT_CAPABILITY } from '../contracts/access.js';
 import { ADAPTER_CAPABILITY, ADAPTER_REBASE_CAPABILITY, WORKSPACE_CAPABILITY } from '../contracts/adapters.js';
 import { RUNNER_CAPABILITY } from '../contracts/runner.js';
 import { CAPABILITY } from '../contracts/index.js';
-import { MEDIA_CAPABILITY } from './media-contract.js';
+import { MEDIA_CAPABILITY, MEDIA_PROFILES_CAPABILITY } from './media-contract.js';
 
 /**
  * The previous installer treated every `CAPABILITY`/`*_CAPABILITY` export as a
@@ -32,7 +32,7 @@ export const REQUIRED_CAPABILITIES = [
 ] as const;
 
 /** New capabilities stay optional so a new plugin keeps working with an old compatible server. */
-export const OPTIONAL_CAPABILITIES = [ACCOUNT_CAPABILITY, MEDIA_CAPABILITY] as const;
+export const OPTIONAL_CAPABILITIES = [ACCOUNT_CAPABILITY, MEDIA_CAPABILITY, MEDIA_PROFILES_CAPABILITY] as const;
 
 export type RequiredCapability = (typeof REQUIRED_CAPABILITIES)[number];
 export type OptionalCapability = (typeof OPTIONAL_CAPABILITIES)[number];

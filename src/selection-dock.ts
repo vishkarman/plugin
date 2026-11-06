@@ -106,24 +106,21 @@ export function selectionDockView(ctx: Context) {
       };
     }, [refresh]);
 
-    useEffect(() => {
-      let active = true;
-      void (async () => {
-        try {
-          const [settings, catalog] = await Promise.all([
-            ctx.remote.vishvakarma.mediaSettings(),
-            ctx.remote.vishvakarma.mediaProfiles(),
-          ]);
-          if (!active) return;
-          if (settings.ok && settings.value.supported) setMode(settings.value.manualGenerationMode);
-          if (catalog.ok && catalog.value.length) {
-            setProfiles(catalog.value);
-            setProfileId(current => catalog.value.some((profile: MediaProfileSummary) => profile.id === current) ? current : catalog.value[0].id);
-          }
-        } catch { /* старая установка: ручная генерация остаётся только через агента */ }
-      })();
-      return () => { active = false; };
+    const refreshMedia = useCallback(async () => {
+      try {
+        const [settings, catalog] = await Promise.all([
+          ctx.remote.vishvakarma.mediaSettings(),
+          ctx.remote.vishvakarma.mediaProfiles(),
+        ]);
+        if (settings.ok && settings.value.supported) setMode(settings.value.manualGenerationMode);
+        if (catalog.ok && catalog.value.length) {
+          setProfiles(catalog.value);
+          setProfileId(current => catalog.value.some((profile: MediaProfileSummary) => profile.id === current) ? current : catalog.value[0].id);
+        }
+      } catch { /* старая установка: ручная генерация остаётся только через агента */ }
     }, [ctx]);
+
+    useEffect(() => { void refreshMedia(); }, [refreshMedia]);
 
     if (!snapshot?.supported || !snapshot.selection) return null;
     const selection = snapshot.selection;
@@ -231,7 +228,7 @@ export function selectionDockView(ctx: Context) {
             stale ? ' · последний выбор' : '',
             readOnly ? ' · только чтение' : '')),
         !readOnly ? h('button', {
-          type: 'button', disabled: busy || generating, onClick: () => setFormOpen(open => !open),
+          type: 'button', disabled: busy || generating, onClick: () => { if (!formOpen) void refreshMedia(); setFormOpen(open => !open); },
           title: 'Сгенерировать изображение по выделению',
           style: { ...smallButton(busy || generating), marginLeft: 'auto', flex: 'none', background: 'transparent', color: 'var(--dsw-alias-label-primary)', border: '0.5px solid var(--dsw-alias-border-l2)' },
         }, formOpen ? 'Скрыть' : 'Сгенерировать…') : null,
