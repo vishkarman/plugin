@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentChatClaim, ChatContextValue } from '../contracts/chat.js';
 import type { Connection } from './connection.js';
+import type { AgentPolicy } from './agent-policy.js';
 
 type SessionBinding = { sessionId: string };
 type ActiveWork = {
@@ -42,7 +43,7 @@ export class ChatBridge {
   private readonly stateFile: string;
   private bindings: Record<string, string> = {};
   private readonly active = new Map<string, ActiveWork>();
-  private readonly sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps: number; toolCalls: number; mediaCostUsd: number; seen: number; pending: Map<string, { name: string; args: string }> }>();
+  private readonly sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps: number; toolCalls: number; mediaCostUsd: number; seen: number; turnIndex: number; pending: Map<string, { name: string; args: string }> }>();
   private readonly childParents = new Map<string, string>();
   private readonly compactingSessions = new Set<string>();
   private lastProjectId: string | null = null;
@@ -54,7 +55,7 @@ export class ChatBridge {
   private stopped = false;
   private timers: ReturnType<typeof setInterval>[] = [];
 
-  constructor(private readonly ctx: Context, private readonly connection: Connection, credentialsFile: string) {
+  constructor(private readonly ctx: Context, private readonly connection: Connection, credentialsFile: string, private readonly policy?: AgentPolicy) {
     this.stateDir = join(dirname(credentialsFile), 'chat');
     this.stateFile = join(this.stateDir, 'instance.json');
     this.bindingFile = join(this.stateDir, 'sessions.json');
@@ -68,8 +69,13 @@ export class ChatBridge {
       if (!raw) return;
       const key = raw.replace(/^session-/, '');
       const events = session?.snapshotEvents?.() ?? [];
+      let turnIndex = 0;
+      for (let index = events.length - 1; index >= 0; index -= 1) if (events[index]?.type === 'turn/start') { turnIndex = index; break; }
       let state = this.sessionUsage.get(key);
-      if (!state) { state = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, steps: 0, toolCalls: 0, mediaCostUsd: 0, seen: 0, pending: new Map() }; this.sessionUsage.set(key, state); }
+      if (!state || state.turnIndex !== turnIndex) {
+        state = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, steps: 0, toolCalls: 0, mediaCostUsd: 0, seen: turnIndex, turnIndex, pending: new Map() };
+        this.sessionUsage.set(key, state);
+      }
       for (const event of events.slice(state.seen)) {
         if (event?.type === 'assistant/message') {
           state.steps += 1;
@@ -242,6 +248,7 @@ export class ChatBridge {
       id: randomUUID(), role: 'user', content: [{ type: 'text', text }],
       source: { kind: 'vishvakarma-chat', requestId: claimed.id },
     });
+    this.policy?.begin(claimed.id, claimed.projectId, claimed.message);
     found.agent.followup(message);
     const sessions = this.ctx.get('sessions') as any;
     if (sessions?.flush) await sessions.flush(found.agent.session);
@@ -536,16 +543,12 @@ function chatPrompt(request: AgentChatClaim, previous: { role: string; body: str
     ...contextLines(request.context),
     ...(history.length ? ['', fresh ? 'Контекст начала чата:' : 'Предыдущие сообщения для непрерывности:', ...history] : []),
     '',
-    'Прочитай проект инструментом vishvakarma_adapter_project (action: read) и сверь ревизию и цель перед правкой.',
-    'Если нужен более ранний контекст переписки — вызови vishvakarma_chat_history (limit 1–50, по умолчанию 10).',
-    'Ответь пользователю в чате Студии инструментом vishvakarma_chat: action reply (или action ask с options) и requestId ' + request.id + '.',
-    'Не отвечай обычным сообщением DSH. Пиши только суть по-русски, мужской род, без технических ID/ревизий и без повторения текста пользователя.',
-    'Изменения допустимы только при access.canUseAgent по текущим правам.',
-    'При ошибке инструмента (невалидный output, недоступность, конфликт) не повторяй дорогую операцию и не заменяй её самодельной (PIL/SVG/другим провайдером). Проверь, не сохранился ли результат (assets/history/preview), останови зависимые правки и ответь пользователю через vishvakarma_chat. Если изображение не удалось получить — допустима простая явная заглушка, но обязательно сообщи, что генерация не удалась.',
-    'Для публикации уже готовых локальных файлов используй vishvakarma_import_files, а не вставляй содержимое больших файлов в vishvakarma_write_files.',
-    'Не дублируй проверки bash-командами: adapter_project уже отдаёт sha256 файлов и список assets, import_files сам сверяет expectedHash и возвращает сохранённую ревизию. Не скачивай ресурсы проекта по URL — используй путь из assets. Bash оставляй для реальной обработки, которую не умеет инструмент.',
-    'Для простой замены одного атрибута/фрагмента не перечитывай и не перезаписывай весь проект: работай по targetId и минимальному изменению; если готового инструмента нет — сообщи об этом, а не дублируй проверки.',
-    'Для правки одного элемента используй vishvakarma_read_target (компактная карточка цели) и затем vishvakarma_edit_target с property из operations (например attr:src). Не вызывай vishvakarma_adapter_project целиком и не публикуй файл через write_files/import_files, если достаточно операции атрибута.',
-    'Если у цели нет нужной операции — не обходи её полным чтением и перезаписью файла молча; сообщи, что операция не поддерживается, и предложи путь через исходники.',
+    'Принципы работы:',
+    '1. Выполни именно текущее поручение. Каждый шаг либо создаёт запрошенный результат, либо устраняет конкретную неопределённость, мешающую его получить или принять.',
+    '2. Выбирай наименее затратный пригодный способ. Дополнительное качество, расширение области и повторная дорогая операция требуют основания в текущем сообщении; прошлые сообщения такого разрешения не продлевают.',
+    '3. При ошибке инструмента не повторяй дорогую операцию и не заменяй её самодельной (PIL/SVG/другим провайдером). Проверь, не сохранился ли результат, останови зависимые правки и сообщи пользователю.',
+    '4. Заканчивай, когда согласованные свойства результата подтверждены. Не придумывай новую цель и не полируй то, о чём не просили.',
+    '',
+    'Практически: для одной цели используй vishvakarma_read_target и vishvakarma_edit_target; не читай проект целиком и не дублируй проверки bash. Готовые локальные файлы публикуй через vishvakarma_import_files. Ответь в чат Студии через vishvakarma_chat action reply (или ask) с requestId ' + request.id + '; обычным сообщением DSH не отвечай. Пиши по-русски, мужской род, без технических ID/ревизий и без повтора текста пользователя.',
   ].join('\n');
 }

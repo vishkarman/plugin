@@ -55,7 +55,7 @@ export function builtinProfiles(config: MediaConfig = {}): MediaProfile[] {
     {
       id: 'core:final',
       title: 'Финальное качество',
-      description: 'Качественная/финальная генерация или доработка выбранного изображения. Только по прямой просьбе пользователя, при ручном режиме «Качество» или для утверждённого драфта.',
+      description: 'Качественная/финальная генерация. Только по прямой просьбе в текущем сообщении или при ручном выборе качества.',
       provider: 'openrouter',
       credential: config.imageApiKeyEnv || 'OPENROUTER_API_KEY',
       model: config.mediaFinalModel || 'google/gemini-3-pro-image',

@@ -5,6 +5,7 @@ import { Connection, ConnectionError } from './connection.js';
 import { MediaError, generateImages, type ImageReference, type ProviderImage } from './media-provider.js';
 import { DEFAULT_PROFILE_ID, builtinProfiles, type MediaConfig, type MediaProfile } from './media-profiles.js';
 import type { GenerateMediaRequest, GenerateMediaResult, GeneratedMediaAsset, MediaProfileSummary, MediaSettings, ServerMediaProfile } from './media-contract.js';
+import type { AgentPolicy } from './agent-policy.js';
 
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
@@ -53,7 +54,7 @@ export interface MediaGenerationOutcome {
 }
 
 export class MediaService {
-  constructor(private readonly ctx: Context, private readonly connection: Connection, private readonly config: MediaConfig) {}
+  constructor(private readonly ctx: Context, private readonly connection: Connection, private readonly config: MediaConfig, private readonly policy?: AgentPolicy) {}
 
   /** Каталог профилей; секретов здесь нет, только статус «настроен». */
   async profiles(): Promise<MediaProfileSummary[]> {
@@ -106,15 +107,18 @@ export class MediaService {
     return await this.generate({
       projectId, baseRevisionId: revisionId, prompt: input.prompt, profileId: input.profile,
       aspectRatio: input.aspectRatio, replace: input.replace === true, sourceAsset: sourceAsset?.path,
-    }, signal);
+    }, signal, { direct: true });
   }
 
-  async generate(input: GenerateInput, signal: AbortSignal): Promise<MediaGenerationOutcome> {
+  async generate(input: GenerateInput, signal: AbortSignal, options: { direct?: boolean } = {}): Promise<MediaGenerationOutcome> {
     if (!input.prompt.trim()) throw new MediaError('INVALID_REQUEST', 'Нужен непустой промпт.');
     if ([...input.prompt].length > 4000) throw new MediaError('INVALID_REQUEST', 'Промпт длиннее 4000 символов.');
     const catalog = await this.catalog(signal);
     const profile = catalog.find(item => item.id === (input.profileId || DEFAULT_PROFILE_ID));
     if (!profile) throw new MediaError('PROFILE_UNKNOWN', `Профиль «${input.profileId ?? ''}» не найден.`, `Доступны: ${catalog.map(item => item.id).join(', ')}.`);
+    if (profile.explicitOnly && !options.direct && !this.policy?.allowsFinalImage(input.projectId)) {
+      throw new MediaError('PROFILE_EXPLICIT_ONLY', 'Профиль финального качества требует прямой просьбы в текущем сообщении.', 'Используйте core:draft или попросите качество явно.');
+    }
     const apiKey = await this.resolveCredential(profile);
     const context = await this.connection.adapterProject(input.projectId, false, undefined, signal);
     if (input.sourceAsset) {

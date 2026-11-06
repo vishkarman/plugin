@@ -22,6 +22,7 @@ import type { UpdateNotice, UpdateSettings, UpdateStatus } from './update-contra
 import { MediaService } from './media-service.js';
 import { registerMediaTools } from './media-tools.js';
 import { registerImportTools } from './import-tools.js';
+import { AgentPolicy } from './agent-policy.js';
 import type { GenerateMediaRequest, GenerateMediaResult, MediaProfileSummary, MediaSettings } from './media-contract.js';
 import type { MediaConfig } from './media-profiles.js';
 
@@ -65,10 +66,11 @@ class StudioService extends TypertRemoteService {
 }
 export function apply(ctx: Context, config: ConnectionConfig & MediaConfig) {
   const connection = new Connection(config);
-  const media = new MediaService(ctx, connection, config);
+  const policy = new AgentPolicy();
+  const media = new MediaService(ctx, connection, config, policy);
   new StudioService(ctx, connection, config, media);
   ctx.typert.remotes.register(studioRemote);
-  const chatBridge = new ChatBridge(ctx, connection, config.credentialsFile);
+  const chatBridge = new ChatBridge(ctx, connection, config.credentialsFile, policy);
   ctx.effect(() => chatBridge.start());
   registerChatTools(ctx, chatBridge);
   ctx.tools.register(defineTool({
