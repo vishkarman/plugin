@@ -24,6 +24,8 @@ export interface ImageProviderRequest {
 export interface ProviderImage {
   bytes: Buffer;
   mime: string;
+  /** Есть ли в файле настоящий альфа-канал, а не нарисованная «прозрачность». */
+  hasAlpha: boolean;
 }
 
 export interface ImageProviderResult {
@@ -44,6 +46,24 @@ function sniffImageMediaType(data: Buffer): 'image/png' | 'image/jpeg' | 'image/
   if (data.length >= 12 && data.subarray(0, 4).toString('latin1') === 'RIFF'
     && data.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
   return null;
+}
+
+/** Проверить настоящий alpha-канал: PNG IHDR/tRNS и WebP VP8X. */
+export function imageHasAlpha(data: Buffer): boolean {
+  const mime = sniffImageMediaType(data);
+  if (mime === 'image/png') {
+    // IHDR начинается на 16: width 16..19, height 20..23, bit depth 24, color type 25.
+    const colorType = data.length > 25 ? data[25] : -1;
+    if (colorType === 4 || colorType === 6) return true;
+    // Палитровый PNG с tRNS тоже имеет прозрачность.
+    return colorType === 3 && data.includes(Buffer.from('tRNS'));
+  }
+  if (mime === 'image/webp') {
+    // VP8X flags: бит alpha = 0x10. Для VP8L/VP8 без VP8X альфу не заявляем.
+    if (data.length >= 21 && data.subarray(12, 16).toString('latin1') === 'VP8X') return (data[20] & 0x10) !== 0;
+    return false;
+  }
+  return false;
 }
 
 function providerError(status: number, message: string): MediaError {
@@ -135,7 +155,7 @@ async function requestOnce(apiKey: string, request: ImageProviderRequest, signal
     if (!sniffed || (declared && declared !== sniffed && !ALLOWED_MIME.has(declared))) {
       throw new MediaError('UNSUPPORTED_FORMAT', `Формат изображения не поддерживается: ${declared || 'неизвестен'}.`, 'Используйте PNG, JPEG или WebP; SVG и GIF не принимаются.');
     }
-    images.push({ bytes, mime: sniffed });
+    images.push({ bytes, mime: sniffed, hasAlpha: imageHasAlpha(bytes) });
   }
   const cost = typeof payload?.usage?.cost === 'number' ? payload.usage.cost : null;
   return { images, costUsd: cost, model: profile.model };

@@ -179,7 +179,7 @@ export class MediaService {
       }
       if (!saved?.revisionId) throw new MediaError('SAVE_FAILED', 'Не удалось сохранить сгенерированный ресурс.', 'Перечитайте проект и повторите.');
       baseRevisionId = saved.revisionId;
-      assets.push({ path, sha256: hash, mime: image.mime, size: image.bytes.length });
+      assets.push({ path, sha256: hash, mime: image.mime, size: image.bytes.length, hasAlpha: image.hasAlpha });
     }
 
     return {

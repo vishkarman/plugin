@@ -45,7 +45,7 @@ export function builtinProfiles(config: MediaConfig = {}): MediaProfile[] {
       credential: config.imageApiKeyEnv || 'OPENROUTER_API_KEY',
       model: config.mediaDraftModel || 'google/gemini-2.5-flash-image',
       resolution: '1K',
-      maxCount: 4,
+      maxCount: 1,
       timeoutMs: 90_000,
       costHintUsd: 0.04,
       explicitOnly: false,

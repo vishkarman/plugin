@@ -78,10 +78,13 @@ export interface GeneratedMediaAsset {
   sha256: string;
   mime: string;
   size: number;
+  /** Настоящий alpha-канал в сохранённом файле. */
+  hasAlpha?: boolean;
 }
 
 export const generatedMediaAssetSchema = z.object({
   path: z.string(), sha256: z.string(), mime: z.string(), size: z.number().int().nonnegative(),
+  hasAlpha: z.boolean().optional(),
 }).strict();
 
 export interface GenerateMediaResult {

@@ -223,7 +223,9 @@ export class ChatBridge {
       const info = typeof llm?.resolveModelInfo === 'function' ? await Promise.resolve(llm.resolveModelInfo(route.provider, route.model)).catch(() => null) : null;
       const efforts = info?.reasoning?.efforts ?? [];
       if (effort === 'max') target = efforts.find((item: any) => item.id === 'max')?.id ?? efforts.at?.(-1)?.id;
-      else target = info?.reasoning?.defaultEffort ?? efforts.find((item: any) => item.id === 'medium' || item.id === 'high')?.id;
+      else target = efforts.find((item: any) => item.id === 'medium')?.id
+        ?? efforts.find((item: any) => item.id === 'low')?.id
+        ?? info?.reasoning?.defaultEffort;
       if (effort === 'max' && !target) return;
       await Promise.resolve(controller.selectModel({ sessionId, provider: route.provider, model: route.model, ...(target ? { reasoningEffort: target } : {}) }));
     } catch (error) {

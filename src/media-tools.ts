@@ -12,6 +12,7 @@ const assetSchema = {
     sha256: { type: 'string', required: true },
     mime: { type: 'string', required: true },
     size: { type: 'integer', required: true },
+    hasAlpha: { type: 'boolean' },
   },
 } as const;
 
@@ -39,6 +40,7 @@ const generateOutput = {
     replaced: { type: 'boolean' },
     costUsd: { type: 'number' },
     studioUrl: { type: 'string' },
+    warning: { type: 'string' },
     preview: previewSchema,
     error: {
       type: 'object', additionalProperties: false,
@@ -109,7 +111,11 @@ export function registerMediaTools(ctx: Context, media: MediaService) {
           preview = await media.previewAttachment(outcome.images[0], first?.path.split('/').at(-1) ?? 'image.png', exec);
         }
         const { costUsd, ...rest } = outcome.result;
-        return { ok: true as const, ...rest, ...(typeof costUsd === 'number' ? { costUsd } : {}), ...(preview ? { preview } : {}) };
+        const missingAlpha = args.transparent === true && outcome.images.some(image => !image.hasAlpha);
+        const warning = missingAlpha
+          ? 'Модель вернула непрозрачное изображение: прозрачность не поддерживается. Не проверяй пиксели вручную; перегенерируй с явным сплошным фоном (без transparent) или выбери модель с alpha.'
+          : null;
+        return { ok: true as const, ...rest, ...(typeof costUsd === 'number' ? { costUsd } : {}), ...(warning ? { warning } : {}), ...(preview ? { preview } : {}) };
       } catch (error) { return failure(error); }
     },
   }));
