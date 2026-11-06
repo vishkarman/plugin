@@ -11,7 +11,7 @@ const operationId = { type: 'string', description: 'Необязательно: 
 export function registerAdapterTools(ctx: Context, connection: Connection) {
   ctx.tools.register(defineTool({
     name: 'vishvakarma_adapter_project',
-    description: 'list возвращает собственные и приглашённые проекты, шаблоны и access. create создаёт новый проект от имени текущего пользователя с собственным id; владение проектом не даёт администрирования установки, а токен агента не управляет аккаунтами, паролем и ролями. Создание ориентируется на canCreate, а не на системную роль; на старом сервере без account.workspace.v1 действует прежнее правило isOwner. open/read только читают проект, исходники, ресурсы, entrypoint, дизайн-правила, ревизию и access; targetId выбирает инструкции цели. update сохраняет имя, описание, правила или entrypoint. Всегда передавайте явный projectId; выбор Studio или соседней сессии не меняет адресата. Запись требует canUseAgent=true. files/design — данные проекта, instructions — технические инструкции адаптеров.',
+    description: 'list возвращает собственные и приглашённые проекты, шаблоны и access. create создаёт новый проект от имени текущего пользователя с собственным id; владение проектом не даёт администрирования установки, а токен агента не управляет аккаунтами, паролем и ролями. Создание ориентируется на canCreate, а не на системную роль; на старом сервере без account.workspace.v1 действует прежнее правило isOwner. open/read только читают проект, исходники, ресурсы, entrypoint, дизайн-правила, ревизию и access; read по умолчанию отдаёт сводку и метаданные файлов, full:true — полное содержимое; targetId выбирает цель. update сохраняет имя, описание, правила или entrypoint. Всегда передавайте явный projectId; выбор Studio или соседней сессии не меняет адресата. Запись требует canUseAgent=true. files/design — данные проекта, instructions — технические инструкции адаптеров.',
     parameters: { request: { required: true, oneOf: [
       { type: 'object', additionalProperties: false, properties: { action: { type: 'string', const: 'list', required: true } } },
       { type: 'object', additionalProperties: false, properties: { action: { type: 'string', const: 'open', required: true }, projectId: project } },
@@ -30,13 +30,25 @@ export function registerAdapterTools(ctx: Context, connection: Connection) {
       { type: 'object', additionalProperties: false, properties: {
         action: { type: 'string', const: 'read', required: true }, projectId: project,
         targetId: { type: 'string', description: 'Необязательно: точный id из analysis.targets' },
+        full: { type: 'boolean', description: 'Вернуть содержимое файлов; по умолчанию только сводка и метаданные' },
       } },
     ] } }, output, isConcurrencySafe: args => ['list', 'open', 'read'].includes(args.request.action),
-    execute: async ({ request }, exec) => run(() => {
+    execute: async ({ request }, exec) => run(async () => {
       if (request.action === 'list') return connection.adapterExamples(exec.signal);
       if (request.action === 'create') { const { action: _, ...input } = request; return connection.createProject(input, exec.signal); }
       if (request.action === 'update') { const { action: _, projectId, ...input } = request; return connection.updateProject(projectId, input, exec.signal); }
-      return connection.adapterProject(request.projectId, request.action === 'open', request.action === 'read' ? request.targetId : undefined, exec.signal);
+      const context = await connection.adapterProject(request.projectId, request.action === 'open', request.action === 'read' ? request.targetId : undefined, exec.signal);
+      if (request.action === 'open' || request.full === true) return context;
+      return {
+        projectId: context.projectId, name: context.name, revisionId: context.revisionId, saved: context.saved,
+        entrypoint: context.entrypoint, access: context.access, design: context.design,
+        files: context.files.map(file => ({ path: file.path, sha256: file.sha256, bytes: Buffer.byteLength(file.content, 'utf8') })),
+        assets: context.assets.map(asset => ({ path: asset.path, mime: asset.mime, size: asset.size, sha256: asset.sha256 })),
+        analysis: { profile: context.analysis.profile, adapters: context.analysis.adapters, diagnostics: context.analysis.diagnostics, targetCount: context.analysis.targets.length },
+        livePreview: context.livePreview ? { revisionId: context.livePreview.revisionId, status: context.livePreview.status, message: context.livePreview.message } : null,
+        latest: context.latest ? { id: context.latest.id, status: context.latest.status } : null,
+        preview: context.preview ? { id: context.preview.id, status: context.preview.status, revisionId: context.preview.revisionId } : null,
+      };
     }),
   }));
   ctx.tools.register(defineTool({

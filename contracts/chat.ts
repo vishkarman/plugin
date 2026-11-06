@@ -80,8 +80,20 @@ export const ChatReconcile = Type.Object({
 export const ChatHistoryQuery = Type.Object({
   limit: Type.Optional(Type.String({ pattern: '^[0-9]{1,2}$' })),
 }, { additionalProperties: false });
+export const ChatContextInfo = Type.Object({
+  projectId: Type.String({ minLength: 1, maxLength: 120 }),
+  totalTokens: Type.Integer({ minimum: 0 }),
+  contextWindow: Type.Optional(Type.Integer({ minimum: 0 })),
+  compacting: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false });
+export type ChatContextState = Static<typeof ChatContextInfo>;
 export const ChatPresence = Type.Object({
   instanceId: Type.String({ minLength: 1, maxLength: 120 }), online: Type.Boolean(),
+  context: Type.Optional(ChatContextInfo),
+}, { additionalProperties: false });
+export const ChatCompactResult = Type.Object({
+  status: Type.Union([Type.Literal('done'), Type.Literal('failed')]),
+  error: Type.Optional(Type.String({ maxLength: 500 })),
 }, { additionalProperties: false });
 
 export type ChatRole = 'user' | 'agent' | 'system';
@@ -112,6 +124,8 @@ export interface ChatState {
   requests: ChatRequest[];
   agentOnline: boolean;
   canUseAgent: boolean;
+  agentContext?: ChatContextState | null;
+  compaction?: { status: 'requested' | 'done' | 'failed'; error?: string | null } | null;
 }
 export interface AgentChatRequest {
   id: string; messageId: string; message: string; projectId: string; context: ChatContextValue;

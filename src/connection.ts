@@ -293,9 +293,13 @@ export class Connection {
     const query = limit === undefined ? '' : '?limit=' + encodeURIComponent(String(limit));
     return request(this.origin, '/api/v1/projects/' + encodeURIComponent(projectId) + '/chat/history' + query, token, undefined, signal);
   }
-  async chatPresence(instanceId: string, online: boolean, signal?: AbortSignal) {
+  async chatPresence(instanceId: string, online: boolean, context?: { projectId: string; totalTokens: number; compacting?: boolean }, signal?: AbortSignal): Promise<{ online: boolean; compact?: { id: string; projectId: string } | null }> {
     const { token } = await this.credentials(signal);
-    return request(this.origin, '/api/v1/agent/presence', token, { instanceId, online }, signal, 'POST');
+    return request(this.origin, '/api/v1/agent/presence', token, { instanceId, online, ...(context ? { context } : {}) }, signal, 'POST');
+  }
+  async chatCompactResult(compactId: string, status: 'done' | 'failed', error?: string, signal?: AbortSignal) {
+    const { token } = await this.credentials(signal);
+    return request(this.origin, '/api/v1/agent/chat/compact/' + compactId, token, { status, ...(error ? { error } : {}) }, signal, 'POST');
   }
   async adapterExamples(signal?: AbortSignal): Promise<{ projects: { id: string; name: string; description: string; access: ProjectAccess }[]; templates: AdapterExample[]; canCreate: boolean }> {
     const { token, capabilities } = await this.credentials(signal, WORKSPACE_CAPABILITY);

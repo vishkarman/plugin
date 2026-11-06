@@ -44,6 +44,10 @@ export class ChatBridge {
   private readonly active = new Map<string, ActiveWork>();
   private readonly sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps: number; toolCalls: number; mediaCostUsd: number; seen: number; pending: Map<string, { name: string; args: string }> }>();
   private readonly childParents = new Map<string, string>();
+  private readonly compactingSessions = new Set<string>();
+  private lastProjectId: string | null = null;
+  private lastSessionId: string | null = null;
+  private compacting = false;
   private instanceId = '';
   private accountId = '';
   private busy = false;
@@ -141,7 +145,38 @@ export class ChatBridge {
 
   private async presence(online: boolean) {
     if (!this.instanceId) return;
-    try { await this.connection.chatPresence(this.instanceId, online); } catch { /* reconnect later */ }
+    try {
+      const context = await this.measureContext();
+      const response = await this.connection.chatPresence(this.instanceId, online, context ?? undefined);
+      if (response?.compact) void this.compactSession(response.compact.id, response.compact.projectId);
+    } catch { /* reconnect later */ }
+  }
+
+  private async measureContext(): Promise<{ projectId: string; totalTokens: number; compacting?: boolean } | null> {
+    if (!this.lastProjectId || !this.lastSessionId) return null;
+    try {
+      const found = await this.resolveAgentAny(this.lastSessionId);
+      const session = found && !('error' in found) ? found.agent?.session : null;
+      const meter = this.ctx.get('tokenMeter') as any;
+      const measured = session && meter?.measure ? await Promise.resolve(meter.measure(session)) : null;
+      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
+    } catch { return null; }
+  }
+
+  private async compactSession(compactId: string, projectId: string) {
+    if (this.compacting) return;
+    this.compacting = true;
+    try {
+      const session = await this.sessionFor(projectId);
+      const found = await this.resolveAgentAny(session.sessionId);
+      const agent = found && !('error' in found) ? found.agent : null;
+      const compaction = this.ctx.get('compaction') as any;
+      if (!agent || typeof compaction?.compactNow !== 'function') throw new Error('DSH не поддерживает ручную компактизацию.');
+      await compaction.compactNow(agent, AbortSignal.timeout(180_000));
+      await this.connection.chatCompactResult(compactId, 'done');
+    } catch (error) {
+      await this.connection.chatCompactResult(compactId, 'failed', String((error as Error)?.message ?? error)).catch(() => {});
+    } finally { this.compacting = false; }
   }
 
   private async tick() {
@@ -176,7 +211,7 @@ export class ChatBridge {
     const saved = this.bindings[key];
     if (saved) {
       const found = await controller.resolveAgent(saved);
-      if (found && !('error' in found)) return { sessionId: saved, fresh: false };
+      if (found && !('error' in found)) { this.lastProjectId = projectId; this.lastSessionId = saved; return { sessionId: saved, fresh: false }; }
       const reason = String(found?.error?.message ?? 'неизвестная ошибка');
       // An occupied or restoring session must never be replaced by a second one.
       if (!/not found|unknown session|missing|не найдена|нет сессии/i.test(reason)) throw new Error('сессия проекта недоступна: ' + reason);
@@ -189,6 +224,8 @@ export class ChatBridge {
     const sessionId = String(created.sessionId);
     if (typeof controller.rename === 'function') await Promise.resolve(controller.rename({ sessionId, title: 'Vishvakarma' })).catch(() => {});
     this.bindings[key] = sessionId;
+    this.lastProjectId = projectId;
+    this.lastSessionId = sessionId;
     await this.writeJson(this.bindingFile, { bindings: this.bindings });
     return { sessionId, fresh: true };
   }
