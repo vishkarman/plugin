@@ -151,7 +151,7 @@ export class MediaService {
       const replace = input.replace === true && index === 0 && !!source && providerResult.images.length === 1;
       const path = replace && source ? source.path : `assets/generated/${slug(input.name || input.prompt)}-${hash.slice(0, 8)}.${extension(image.mime)}`;
       const expectedHash = replace && source ? source.sha256 : null;
-      const operationId = randomUUID();
+      let operationId = randomUUID();
       const contentBase64 = image.bytes.toString('base64');
       let saved = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -162,13 +162,19 @@ export class MediaService {
           }, signal);
           break;
         } catch (error) {
-          if (!(error instanceof ConnectionError) || attempt === 1) throw this.uploadError(error);
-          if (!['CONFLICT', 'REVISION_CONFLICT', 'TRANSPORT', 'UNAVAILABLE', 'UNCONFIRMED'].includes(error.code)) throw this.uploadError(error);
+          // Only a definite conflict is safe to retry: it proves the write did not commit.
+          if (!(error instanceof ConnectionError) || attempt === 1 || !['CONFLICT', 'REVISION_CONFLICT'].includes(error.code)) {
+            if (error instanceof ConnectionError && ['TRANSPORT', 'UNAVAILABLE', 'UNCONFIRMED'].includes(error.code)) {
+              throw new MediaError('SAVE_UNKNOWN', 'Результат сохранения изображения неизвестен; повторная загрузка не запускалась.', 'Проверьте ресурсы проекта; не запускайте генерацию повторно.');
+            }
+            throw this.uploadError(error);
+          }
           const fresh = await this.connection.adapterProject(input.projectId, false, undefined, signal);
           if (replace && fresh.assets.find(asset => asset.path === path)?.sha256 !== expectedHash) {
             throw new MediaError('RESOURCE_CONFLICT', 'Выбранное изображение изменилось, пока шла генерация.', 'Перечитайте проект и повторите; ничего не перезаписано.');
           }
           baseRevisionId = fresh.revisionId;
+          operationId = randomUUID();
         }
       }
       if (!saved?.revisionId) throw new MediaError('SAVE_FAILED', 'Не удалось сохранить сгенерированный ресурс.', 'Перечитайте проект и повторите.');
