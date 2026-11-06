@@ -57,7 +57,7 @@ export const ChatUsageInput = Type.Object({
   inputTokens: Type.Integer({ minimum: 0 }), outputTokens: Type.Integer({ minimum: 0 }),
   cacheReadTokens: Type.Integer({ minimum: 0 }), cacheWriteTokens: Type.Integer({ minimum: 0 }),
   steps: Type.Optional(Type.Integer({ minimum: 0 })), toolCalls: Type.Optional(Type.Integer({ minimum: 0 })),
-  subagents: Type.Optional(Type.Integer({ minimum: 0 })),
+  subagents: Type.Optional(Type.Integer({ minimum: 0 })), mediaCostUsd: Type.Optional(Type.Number({ minimum: 0 })),
 }, { additionalProperties: false });
 export const ChatAnswer = Type.Object({
   leaseToken: Uuid, sessionId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -99,11 +99,11 @@ export interface ChatRequest {
   effort?: 'normal' | 'max';
   model?: string | null;
   activity?: string | null;
-  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalTokens: number; costUsd: number; steps: number; toolCalls: number; subagents: number } | null;
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalTokens: number; costUsd: number; mediaCostUsd: number; steps: number; toolCalls: number; subagents: number } | null;
 }
 export interface ChatUsageSummary {
   requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number;
-  totalTokens: number; costUsd: number; durationMs: number; steps: number; toolCalls: number;
+  totalTokens: number; costUsd: number; mediaCostUsd: number; durationMs: number; steps: number; toolCalls: number;
 }
 export interface ChatUsageResponse { session: ChatUsageSummary; project: ChatUsageSummary }
 export interface ChatState {

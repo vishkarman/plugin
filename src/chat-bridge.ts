@@ -17,6 +17,18 @@ const BEAT_MS = 60_000;
 const PRESENCE_MS = 30_000;
 const MAX_REMINDERS = 2;
 
+/** Image generation is priced by OpenRouter usage when present; otherwise use the profile hint. */
+function mediaGenerationCost(args: string, resultText: string) {
+  try {
+    const payload = JSON.parse(resultText);
+    if (typeof payload?.costUsd === 'number' && payload.costUsd > 0) return payload.costUsd;
+  } catch { /* result may be an error string */ }
+  try {
+    const parsed = JSON.parse(args);
+    return parsed.profile === 'core:final' ? 0.12 : 0.04;
+  } catch { return 0.04; }
+}
+
 /**
  * Host bridge between the Vishvakarma project chat and one DSH session per project.
  *
@@ -30,7 +42,7 @@ export class ChatBridge {
   private readonly stateFile: string;
   private bindings: Record<string, string> = {};
   private readonly active = new Map<string, ActiveWork>();
-  private readonly sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps: number; toolCalls: number; seen: number }>();
+  private readonly sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; steps: number; toolCalls: number; mediaCostUsd: number; seen: number; pending: Map<string, { name: string; args: string }> }>();
   private readonly childParents = new Map<string, string>();
   private instanceId = '';
   private accountId = '';
@@ -53,7 +65,7 @@ export class ChatBridge {
       const key = raw.replace(/^session-/, '');
       const events = session?.snapshotEvents?.() ?? [];
       let state = this.sessionUsage.get(key);
-      if (!state) { state = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, steps: 0, toolCalls: 0, seen: 0 }; this.sessionUsage.set(key, state); }
+      if (!state) { state = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, steps: 0, toolCalls: 0, mediaCostUsd: 0, seen: 0, pending: new Map() }; this.sessionUsage.set(key, state); }
       for (const event of events.slice(state.seen)) {
         if (event?.type === 'assistant/message') {
           state.steps += 1;
@@ -70,7 +82,18 @@ export class ChatBridge {
         }
         if (event?.type === 'tool/call') {
           state.toolCalls += 1;
+          const callId = String(event.data?.callId ?? '');
+          if (callId) state.pending.set(callId, { name: String(event.data?.name ?? ''), args: String(event.data?.arguments ?? '') });
           this.publishActivity(key, String(event.data?.name ?? ''), String(event.data?.arguments ?? ''));
+        }
+        if (event?.type === 'tool/result') {
+          const callId = String(event.data?.message?.toolCallId ?? event.data?.toolCallId ?? '');
+          const call = callId ? state.pending.get(callId) : undefined;
+          if (call?.name === 'vishvakarma_generate_image') {
+            const text = (event.data?.message?.content ?? []).map((block: any) => block?.text ?? '').join(' ');
+            state.mediaCostUsd += mediaGenerationCost(call.args, text);
+            state.pending.delete(callId);
+          }
         }
       }
       state.seen = events.length;
@@ -276,7 +299,7 @@ export class ChatBridge {
       const own = this.sessionUsage.get(sessionId.replace(/^session-/, ''));
       const usage = { inputTokens: own?.inputTokens ?? 0, outputTokens: own?.outputTokens ?? 0,
         cacheReadTokens: own?.cacheReadTokens ?? 0, cacheWriteTokens: own?.cacheWriteTokens ?? 0,
-        steps: own?.steps ?? 0, toolCalls: own?.toolCalls ?? 0 };
+        steps: own?.steps ?? 0, toolCalls: own?.toolCalls ?? 0, mediaCostUsd: own?.mediaCostUsd ?? 0 };
       if (!usage.steps) {
         for (const event of parentEvents) {
           if (event?.type === 'assistant/message') {
@@ -303,7 +326,7 @@ export class ChatBridge {
         if (!used) continue;
         usage.inputTokens += used.inputTokens; usage.outputTokens += used.outputTokens;
         usage.cacheReadTokens += used.cacheReadTokens; usage.cacheWriteTokens += used.cacheWriteTokens;
-        usage.steps += used.steps; usage.toolCalls += used.toolCalls;
+        usage.steps += used.steps; usage.toolCalls += used.toolCalls; usage.mediaCostUsd += used.mediaCostUsd;
       }
       return usage.steps ? { ...usage, subagents: children.size } : undefined;
     } catch { return undefined; }
