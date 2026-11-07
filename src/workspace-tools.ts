@@ -13,14 +13,19 @@ export interface WorkspaceManifest {
 
 export const WORKSPACE_MANIFEST = '.vishvakarma-workspace.json';
 export const workspaceRoot = (credentialsFile: string) => join(dirname(credentialsFile), 'chat', 'workspace');
+export const workspaceRootFor = (credentialsFile: string, exec?: any) => {
+  const cwd = exec?.agent?.session?.cwd ?? exec?.agent?.options?.cwd;
+  return typeof cwd === 'string' && cwd ? cwd : workspaceRoot(credentialsFile);
+};
 
-export async function readWorkspaceManifest(credentialsFile: string): Promise<WorkspaceManifest | null> {
+export async function readWorkspaceManifestAt(root: string): Promise<WorkspaceManifest | null> {
   try {
-    const raw = JSON.parse(await readFile(join(workspaceRoot(credentialsFile), WORKSPACE_MANIFEST), 'utf8'));
+    const raw = JSON.parse(await readFile(join(root, WORKSPACE_MANIFEST), 'utf8'));
     if (typeof raw?.projectId !== 'string' || typeof raw?.revisionId !== 'string' || typeof raw?.files !== 'object') return null;
     return raw as WorkspaceManifest;
   } catch { return null; }
 }
+export const readWorkspaceManifest = (credentialsFile: string) => readWorkspaceManifestAt(workspaceRoot(credentialsFile));
 
 
 /** Write the current project sources and their provenance into the workspace. */
@@ -48,7 +53,7 @@ export function registerWorkspaceTools(ctx: Context, connection: Connection, cre
     output, isConcurrencySafe: () => false,
     execute: async ({ projectId }, exec) => run(async () => {
       const context = await connection.adapterProject(String(projectId), false, undefined, exec.signal);
-      const manifest = await syncWorkspaceFromContext(context, workspaceRoot(credentialsFile));
+      const manifest = await syncWorkspaceFromContext(context, workspaceRootFor(credentialsFile, exec));
       return { projectId: manifest.projectId, revisionId: manifest.revisionId, files: Object.keys(manifest.files) };
     }),
   }));

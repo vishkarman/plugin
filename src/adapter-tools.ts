@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Connection } from './connection.js';
 import { output, run } from './tool-output.js';
+import { readWorkspaceManifestAt } from './workspace-tools.js';
 
 const project = { type: 'string', required: true, description: 'Идентификатор доступного проекта из list; не угадывайте доступ к другим проектам' } as const;
 const baseRevision = { type: 'string', required: true, description: 'UUID последней прочитанной ревизии этого проекта' } as const;
@@ -76,8 +77,24 @@ export function registerAdapterTools(ctx: Context, connection: Connection) {
         content: { required: true, oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Полный новый UTF-8 исходник до 262144 символов; null удаляет файл' },
       } } },
     }, output, isConcurrencySafe: args => args.action === 'check',
-    execute: async ({ projectId, baseRevisionId, files, action, operationId }, exec) => run(() =>
-      connection.adapterChange(projectId, baseRevisionId, { type: 'files', files }, exec.signal, { action, operationId })),
+    execute: async ({ projectId, baseRevisionId, files, action, operationId }, exec) => run(async () => {
+      const context = await connection.adapterProject(projectId, false, undefined, exec.signal);
+      const existing = new Set(context.files.map(file => file.path));
+      const cwd = exec?.agent?.session?.cwd;
+      const manifest = cwd ? await readWorkspaceManifestAt(cwd) : null;
+      for (const file of files) {
+        if (!existing.has(file.path) || file.content === null) {
+          if (file.content === null && existing.has(file.path) && (!manifest || manifest.projectId !== projectId || manifest.revisionId !== baseRevisionId || manifest.files[file.path] === undefined)) {
+            throw new Error('Нельзя удалять существующий файл без синхронизированной рабочей копии. Сначала vishvakarma_workspace_sync.');
+          }
+          continue;
+        }
+        if (!manifest || manifest.projectId !== projectId || manifest.revisionId !== baseRevisionId || manifest.files[file.path] === undefined) {
+          throw new Error('Нельзя перезаписывать существующий файл без синхронизированной рабочей копии. Сначала vishvakarma_workspace_sync.');
+        }
+      }
+      return connection.adapterChange(projectId, baseRevisionId, { type: 'files', files }, exec.signal, { action, operationId });
+    }),
   }));
   ctx.tools.register(defineTool({
     name: 'vishvakarma_asset',

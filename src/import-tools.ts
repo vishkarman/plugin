@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Connection } from './connection.js';
 import { output, run } from './tool-output.js';
-import { readWorkspaceManifest, workspaceRoot } from './workspace-tools.js';
+import { readWorkspaceManifestAt, workspaceRootFor } from './workspace-tools.js';
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const MAX_FILES = 8;
@@ -38,11 +38,11 @@ export function registerImportTools(ctx: Context, connection: Connection, creden
       if (!projectId || !/^[0-9a-f-]{36}$/i.test(baseRevisionId) || entries.length < 1 || entries.length > MAX_FILES) {
         throw new Error('Нужен проект, UUID ревизии и от 1 до 8 файлов.');
       }
-      const root = await realpath(workspaceRoot(credentialsFile)).catch(() => null);
+      const root = await realpath(workspaceRootFor(credentialsFile, exec)).catch(() => null);
       if (!root) throw new Error('Рабочая папка чата ещё не создана.');
       const context = await connection.adapterProject(projectId, false, undefined, exec.signal);
       if (context.revisionId !== baseRevisionId) throw new Error('Ревизия проекта изменилась; прочитайте проект заново.');
-      const manifest = await readWorkspaceManifest(credentialsFile);
+      const manifest = await readWorkspaceManifestAt(root);
       if (manifest && (manifest.projectId !== projectId || manifest.revisionId !== baseRevisionId)) {
         throw new Error('Рабочая папка устарела относительно проекта. Вызовите vishvakarma_workspace_sync и внесите правки заново.');
       }

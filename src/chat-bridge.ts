@@ -5,7 +5,6 @@ import { dirname, join } from 'node:path';
 import type { AgentChatClaim, ChatContextValue } from '../contracts/chat.js';
 import type { Connection } from './connection.js';
 import type { AgentPolicy } from './agent-policy.js';
-import { syncWorkspaceFromContext } from './workspace-tools.js';
 
 type SessionBinding = { sessionId: string };
 type ActiveWork = {
@@ -257,7 +256,7 @@ export class ChatBridge {
       delete this.bindings[key];
       await this.writeJson(this.bindingFile, { bindings: this.bindings });
     }
-    const workspaceDir = join(this.stateDir, 'workspace');
+    const workspaceDir = join(this.stateDir, 'workspace', projectId.replace(/[^a-zA-Z0-9_-]/g, '_'));
     await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
     const created = await controller.create({ cwd: workspaceDir });
     const sessionId = String(created.sessionId);
@@ -271,10 +270,6 @@ export class ChatBridge {
 
   private async deliver(claimed: AgentChatClaim, sessionId: string, fresh: boolean) {
     const controller = this.ctx.get('sessionController') as any;
-    try {
-      const context = await this.connection.adapterProject(claimed.projectId, false, undefined, AbortSignal.timeout(15_000));
-      await syncWorkspaceFromContext(context, join(this.stateDir, 'workspace'));
-    } catch (error) { this.ctx.logger?.warn?.('vishvakarma chat: не удалось синхронизировать workspace: ' + String(error)); }
     await this.applyEffort(sessionId, claimed.effort);
     const found = await controller.resolveAgent(sessionId);
     if (!found || 'error' in found) throw new Error('сессия проекта недоступна перед доставкой');
