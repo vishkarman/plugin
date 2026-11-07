@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Connection } from './connection.js';
@@ -12,9 +12,13 @@ export interface WorkspaceManifest {
 }
 
 export const WORKSPACE_MANIFEST = '.vishvakarma-workspace.json';
+const BASE_TTL_MS = 7 * 24 * 60 * 60_000;
+const BASE_LIMIT = 10;
+const safeSegment = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+export const workspaceBaseRoot = (credentialsFile: string, projectId: string) => join(dirname(credentialsFile), 'chat', 'workspace-base', safeSegment(projectId));
 export const workspaceRoot = (credentialsFile: string) => join(dirname(credentialsFile), 'chat', 'workspace');
 export const workspaceRootFor = (credentialsFile: string, exec?: any) => {
-  const cwd = exec?.agent?.session?.cwd ?? exec?.agent?.options?.cwd;
+  const cwd = exec?.agent?.session?.header?.cwd ?? exec?.agent?.session?.cwd ?? exec?.agent?.options?.cwd;
   return typeof cwd === 'string' && cwd ? cwd : workspaceRoot(credentialsFile);
 };
 
@@ -28,8 +32,7 @@ export async function readWorkspaceManifestAt(root: string): Promise<WorkspaceMa
 export const readWorkspaceManifest = (credentialsFile: string) => readWorkspaceManifestAt(workspaceRoot(credentialsFile));
 
 
-/** Write the current project sources and their provenance into the workspace. */
-export async function syncWorkspaceFromContext(context: { projectId: string; revisionId: string; files: Array<{ path: string; content: string; sha256: string }> }, root: string) {
+async function writeSnapshot(context: { projectId: string; revisionId: string; files: Array<{ path: string; content: string; sha256: string }> }, root: string) {
   await mkdir(root, { recursive: true, mode: 0o700 });
   const files: Record<string, string> = {};
   for (const file of context.files) {
@@ -44,6 +47,31 @@ export async function syncWorkspaceFromContext(context: { projectId: string; rev
   return manifest;
 }
 
+async function collectBaseGarbage(credentialsFile: string, projectId: string) {
+  const root = workspaceBaseRoot(credentialsFile, projectId);
+  const names = await readdir(root).catch(() => []);
+  const entries = [];
+  for (const name of names) {
+    const path = join(root, name);
+    const info = await stat(path).catch(() => null);
+    if (info?.isDirectory()) entries.push({ path, age: Date.now() - info.mtimeMs });
+  }
+  entries.sort((a, b) => b.age - a.age);
+  for (let index = 0; index < entries.length; index += 1) {
+    if (entries[index].age > BASE_TTL_MS || index >= BASE_LIMIT) await rm(entries[index].path, { recursive: true, force: true });
+  }
+}
+
+/** Write the current project sources and their provenance into the workspace. */
+export async function syncWorkspaceFromContext(context: { projectId: string; revisionId: string; files: Array<{ path: string; content: string; sha256: string }> }, root: string, credentialsFile?: string) {
+  const manifest = await writeSnapshot(context, root);
+  if (credentialsFile) {
+    await writeSnapshot(context, join(workspaceBaseRoot(credentialsFile, context.projectId), context.revisionId));
+    await collectBaseGarbage(credentialsFile, context.projectId);
+  }
+  return manifest;
+}
+
 /** Fetch the project sources into the chat workspace together with provenance. */
 export function registerWorkspaceTools(ctx: Context, connection: Connection, credentialsFile: string) {
   ctx.tools.register(defineTool({
@@ -53,7 +81,7 @@ export function registerWorkspaceTools(ctx: Context, connection: Connection, cre
     output, isConcurrencySafe: () => false,
     execute: async ({ projectId }, exec) => run(async () => {
       const context = await connection.adapterProject(String(projectId), false, undefined, exec.signal);
-      const manifest = await syncWorkspaceFromContext(context, workspaceRootFor(credentialsFile, exec));
+      const manifest = await syncWorkspaceFromContext(context, workspaceRootFor(credentialsFile, exec), credentialsFile);
       return { projectId: manifest.projectId, revisionId: manifest.revisionId, files: Object.keys(manifest.files) };
     }),
   }));
