@@ -23,6 +23,7 @@ import { MediaService } from './media-service.js';
 import { registerMediaTools } from './media-tools.js';
 import { registerImportTools } from './import-tools.js';
 import { registerWorkspaceTools } from './workspace-tools.js';
+import { registerPatchTools } from './patch-tools.js';
 import { AgentPolicy } from './agent-policy.js';
 import type { GenerateMediaRequest, GenerateMediaResult, MediaProfileSummary, MediaSettings } from './media-contract.js';
 import type { MediaConfig } from './media-profiles.js';
@@ -98,6 +99,7 @@ export function apply(ctx: Context, config: ConnectionConfig & MediaConfig & { c
   registerMediaTools(ctx, media);
   registerImportTools(ctx, connection, config.credentialsFile);
   registerWorkspaceTools(ctx, connection, config.credentialsFile);
+  registerPatchTools(ctx, connection, config.credentialsFile);
   const skillDir = fileURLToPath(new URL('../skills/vishvakarma/', import.meta.url));
   const skillPath = skillDir + 'SKILL.md';
   ctx.skills.registerProvider(() => ({
