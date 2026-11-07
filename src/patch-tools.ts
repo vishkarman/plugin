@@ -67,8 +67,9 @@ export function registerPatchTools(ctx: Context, connection: Connection, credent
           const path = String(raw.path ?? '');
           const file = current.get(path);
           const edits = Array.isArray(raw.edits) ? raw.edits as Array<Record<string, unknown>> : [];
-          if (!file) throw new Error('Файл исчез из проекта: ' + path);
-          rebased.push({ path, content: applyEdits(file.content, edits), expectedHash: file.sha256 });
+          if (!file) throw new ConnectionError('CONFLICT', 'Файл исчез из проекта: ' + path, context.revisionId, undefined, { baseRevisionId });
+          try { rebased.push({ path, content: applyEdits(file.content, edits), expectedHash: file.sha256 }); }
+          catch (error) { throw new ConnectionError('CONFLICT', 'Конфликт в ' + path + ': ' + String((error as Error)?.message ?? error), context.revisionId, undefined, { baseRevisionId }); }
         }
         const retried = await connection.adapterChange(projectId, context.revisionId, { type: 'files', files: rebased }, exec.signal);
         if (!('saved' in retried) || !retried.saved) throw new Error('Не удалось переприменить патч к актуальной ревизии.');

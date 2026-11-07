@@ -86,3 +86,33 @@ export function registerWorkspaceTools(ctx: Context, connection: Connection, cre
     }),
   }));
 }
+
+/** Read-only snapshot diagnostics for the agent and chat UI. */
+export function registerWorkspaceStatusTools(ctx: Context, connection: Connection, credentialsFile: string) {
+  ctx.tools.register(defineTool({
+    name: 'vishvakarma_workspace_status',
+    description: 'Показать состояние рабочей копии: базовая ревизия, актуальная ревизия проекта, устаревание, число файлов и размер immutable base. Ничего не меняет.',
+    parameters: { projectId: { type: 'string', required: true, description: 'Идентификатор проекта' } },
+    output, isConcurrencySafe: () => true,
+    execute: async ({ projectId }, exec) => run(async () => {
+      const root = workspaceRootFor(credentialsFile, exec);
+      const manifest = await readWorkspaceManifestAt(root);
+      if (!manifest) return { synced: false, projectId };
+      const base = join(workspaceBaseRoot(credentialsFile, String(projectId)), manifest.revisionId);
+      let bytes = 0, entries = 0;
+      const walk = async (dir: string) => {
+        for (const name of await readdir(dir).catch(() => [])) {
+          const path = join(dir, name);
+          const info = await stat(path).catch(() => null);
+          if (!info) continue;
+          if (info.isDirectory()) await walk(path);
+          else { bytes += info.size; entries += 1; }
+        }
+      };
+      await walk(base);
+      const current = await connection.adapterProject(String(projectId), false, undefined, exec.signal);
+      return { synced: true, projectId, baseRevisionId: manifest.revisionId, currentRevisionId: current.revisionId,
+        stale: manifest.revisionId !== current.revisionId, files: Object.keys(manifest.files).length, baseBytes: bytes, baseEntries: entries };
+    }),
+  }));
+}
