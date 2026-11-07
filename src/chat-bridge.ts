@@ -175,7 +175,12 @@ export class ChatBridge {
       const llm = this.ctx.get('llm') as any;
       const info = provider && model && typeof llm?.resolveModelInfo === 'function'
         ? await Promise.resolve(llm.resolveModelInfo(provider, model)).catch(() => null) : null;
-      const contextWindow = Number(info?.context?.contextWindow) || undefined;
+      let contextWindow = Number(info?.context?.contextWindow) || undefined;
+      if (!contextWindow) {
+        const projections = this.ctx.get('sessionProjections') as any;
+        const snapshot = session && projections?.snapshot ? await Promise.resolve(projections.snapshot(session)).catch(() => null) : null;
+        contextWindow = Number(snapshot?.contextPressure?.contextWindow) || undefined;
+      }
       return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), ...(contextWindow ? { contextWindow } : {}), compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
     } catch { return null; }
   }
