@@ -158,15 +158,25 @@ export class ChatBridge {
     } catch { /* reconnect later */ }
   }
 
-  private async measureContext(): Promise<{ projectId: string; totalTokens: number; compacting?: boolean; canCompact?: boolean } | null> {
+  private async measureContext(): Promise<{ projectId: string; totalTokens: number; contextWindow?: number; compacting?: boolean } | null> {
     if (!this.lastProjectId || !this.lastSessionId) return null;
     try {
       const found = await this.resolveAgentAny(this.lastSessionId);
-      const session = found && !('error' in found) ? found.agent?.session : null;
+      const agent = found && !('error' in found) ? found.agent : null;
+      const session = agent?.session ?? null;
       const meter = this.ctx.get('tokenMeter') as any;
       const measured = session && meter?.measure ? await Promise.resolve(meter.measure(session)) : null;
-      const compaction = this.ctx.get('compaction') as any;
-      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')), canCompact: typeof compaction?.compactNow === 'function' };
+      let provider = '', model = '';
+      for (const event of (session?.snapshotEvents?.() ?? []) as any[]) {
+        if (event?.type !== 'request/header') continue;
+        const config = event.data?.header?.config;
+        if (typeof config?.provider === 'string' && typeof config?.model === 'string') { provider = config.provider; model = config.model; }
+      }
+      const llm = this.ctx.get('llm') as any;
+      const info = provider && model && typeof llm?.resolveModelInfo === 'function'
+        ? await Promise.resolve(llm.resolveModelInfo(provider, model)).catch(() => null) : null;
+      const contextWindow = Number(info?.context?.contextWindow) || undefined;
+      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), ...(contextWindow ? { contextWindow } : {}), compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
     } catch { return null; }
   }
 
