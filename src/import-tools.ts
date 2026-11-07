@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Connection } from './connection.js';
 import { output, run } from './tool-output.js';
+import { readWorkspaceManifest, workspaceRoot } from './workspace-tools.js';
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const MAX_FILES = 8;
@@ -37,11 +38,14 @@ export function registerImportTools(ctx: Context, connection: Connection, creden
       if (!projectId || !/^[0-9a-f-]{36}$/i.test(baseRevisionId) || entries.length < 1 || entries.length > MAX_FILES) {
         throw new Error('Нужен проект, UUID ревизии и от 1 до 8 файлов.');
       }
-      const workspace = join(dirname(credentialsFile), 'chat', 'workspace');
-      const root = await realpath(workspace).catch(() => null);
+      const root = await realpath(workspaceRoot(credentialsFile)).catch(() => null);
       if (!root) throw new Error('Рабочая папка чата ещё не создана.');
       const context = await connection.adapterProject(projectId, false, undefined, exec.signal);
       if (context.revisionId !== baseRevisionId) throw new Error('Ревизия проекта изменилась; прочитайте проект заново.');
+      const manifest = await readWorkspaceManifest(credentialsFile);
+      if (manifest && (manifest.projectId !== projectId || manifest.revisionId !== baseRevisionId)) {
+        throw new Error('Рабочая папка устарела относительно проекта. Вызовите vishvakarma_workspace_sync и внесите правки заново.');
+      }
       const existing = new Map(context.files.map(file => [file.path, file.sha256]));
       const imported: Array<{ sourcePath: string; targetPath: string; bytes: number; sha256: string }> = [];
       const files: Array<{ path: string; content: string; expectedHash: string | null }> = [];
@@ -59,7 +63,11 @@ export function registerImportTools(ctx: Context, connection: Connection, creden
         const content = bytes.toString('utf8');
         if (content.includes('\uFFFD')) throw new Error('Файл не является корректным UTF-8.');
         const hash = sha256(bytes);
-        const expectedHash = typeof raw.expectedHash === 'string' ? raw.expectedHash : existing.get(targetPath) ?? null;
+        const existingHash = existing.get(targetPath) ?? null;
+        if (existingHash !== null && (!manifest || manifest.projectId !== projectId || manifest.files[targetPath] === undefined)) {
+          throw new Error('Нельзя перезаписывать существующий файл без синхронизированной рабочей копии. Сначала vishvakarma_workspace_sync.');
+        }
+        const expectedHash = existingHash;
         files.push({ path: targetPath, content, expectedHash });
         imported.push({ sourcePath, targetPath, bytes: info.size, sha256: hash });
       }
