@@ -236,6 +236,10 @@ export class MediaService {
       if (error.code === 'RESOURCE_CONFLICT' || error.code === 'CHANGE_CONFLICT')
         return new MediaError('RESOURCE_CONFLICT', 'Ресурс изменился, пока шла генерация.', 'Перечитайте проект и повторите; ничего не перезаписано.');
       if (error.code === 'PROJECT_NOT_FOUND') return new MediaError('PROJECT_NOT_FOUND', 'Проект недоступен.', 'Перечитайте список доступных проектов.');
+      if (error.code === 'ASSET_LIMIT')
+        return new MediaError('ASSET_LIMIT', 'В проекте не хватает места для ресурсов: лимит 128 файлов и 16 МиБ.', 'Новое изображение не сохранено. Удалите неиспользуемые ресурсы из assets или замените существующую картинку и повторите; не запускайте генерацию вслепую.');
+      if (['ASSET_INVALID', 'ASSET_MIME', 'ASSET_PATH'].includes(error.code))
+        return new MediaError(error.code, 'Сервер отклонил файл изображения.', 'Проверьте формат и путь ресурса; не повторяйте генерацию.');
       return new MediaError('SAVE_FAILED', 'Не удалось сохранить сгенерированный ресурс.', 'Перечитайте проект и повторите.');
     }
     return new MediaError('SAVE_FAILED', 'Не удалось сохранить сгенерированный ресурс.', 'Перечитайте проект и повторите.');

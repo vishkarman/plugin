@@ -94,6 +94,11 @@ export async function request<T>(origin: string, path: string, token?: string, b
       }
       if (response.status === 404 && data?.error?.code === 'PROJECT_NOT_FOUND')
         throw new ConnectionError('PROJECT_NOT_FOUND', 'Проект недоступен: он отсутствует или доступ отозван. Перечитайте список доступных проектов; не пытайтесь создать его вместо открытия.');
+      // Resource limits are actionable: keep the server code instead of collapsing it into INVALID_REQUEST.
+      if (response.status === 400 && ['ASSET_LIMIT', 'ASSET_INVALID', 'ASSET_MIME', 'ASSET_PATH'].includes(data?.error?.code as string)) {
+        throw new ConnectionError(data.error.code, typeof data.error.message === 'string' && data.error.message
+          ? data.error.message : 'Сервер отклонил ресурс проекта.');
+      }
       const codes: Record<number, [string, string]> = {
         400: ['INVALID_REQUEST', 'Сервер отклонил параметры изменения.'],
         401: ['UNAUTHORIZED', 'Доступ отсутствует или отозван. Подключитесь заново.'],
