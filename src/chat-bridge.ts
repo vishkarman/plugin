@@ -49,6 +49,7 @@ export class ChatBridge {
   private lastProjectId: string | null = null;
   private lastSessionId: string | null = null;
   private compacting = false;
+  private lastAutoCompactAt = 0;
   private instanceId = '';
   private accountId = '';
   private busy = false;
@@ -186,8 +187,24 @@ export class ChatBridge {
         const snapshot = session && projections?.snapshot ? await Promise.resolve(projections.snapshot(session)).catch(() => null) : null;
         contextWindow = Number(snapshot?.contextPressure?.contextWindow) || undefined;
       }
-      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), ...(contextWindow ? { contextWindow } : {}), contextBudget: this.contextBudget, compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
+      const totalTokens = Math.max(0, Number(measured?.totalTokens) || 0);
+      if (totalTokens > this.contextBudget && this.active.size === 0 && !this.compacting && Date.now() - this.lastAutoCompactAt > 60_000) {
+        this.lastAutoCompactAt = Date.now();
+        void this.autoCompact(agent);
+      }
+      return { projectId: this.lastProjectId, totalTokens, ...(contextWindow ? { contextWindow } : {}), contextBudget: this.contextBudget, compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
     } catch { return null; }
+  }
+
+  private async autoCompact(agent: any) {
+    if (this.compacting || !agent) return;
+    this.compacting = true;
+    try {
+      const compaction = this.ctx.get('compaction') as any;
+      if (typeof compaction?.compactNow !== 'function') return;
+      await compaction.compactNow(agent, AbortSignal.timeout(120_000));
+    } catch { /* busy or no range: try again after the interval */ }
+    finally { this.compacting = false; }
   }
 
   private async compactSession(compactId: string, projectId: string) {
