@@ -314,11 +314,14 @@ export class Connection {
     const templates = account || user.isOwner ? await request<{ examples: AdapterExample[] }>(this.origin, '/api/v1/adapters/examples', token, undefined, signal) : { examples: [] };
     return { projects: result.projects, templates: templates.examples, canCreate: account ? user.canCreateProjects : user.isOwner };
   }
-  async adapterProject(projectId: ExampleKey, _open: boolean, targetId?: string, signal?: AbortSignal): Promise<AdapterProjectContext & { studioUrl: string }> {
+  async adapterProject(projectId: ExampleKey, _open: boolean, targetId?: string, signal?: AbortSignal, files?: string[]): Promise<AdapterProjectContext & { studioUrl: string }> {
     if (!projectKey(projectId) || (targetId !== undefined && (!targetId || targetId.length > 256)))
       throw new ConnectionError('INVALID_REQUEST', 'Нужен существующий проект и допустимый идентификатор цели.');
     const { token } = await this.credentials(signal, WORKSPACE_CAPABILITY);
-    const path = '/api/v1/adapters/projects/' + projectId + (targetId ? '?targetId=' + encodeURIComponent(targetId) : '');
+    const query = new URLSearchParams();
+    if (targetId) query.set('targetId', targetId);
+    if (files?.length) query.set('files', files.join(','));
+    const path = '/api/v1/adapters/projects/' + projectId + (query.size ? '?' + query.toString() : '');
     const result = await request<AdapterProjectContext>(this.origin, path, token, undefined, signal);
     if (!validContext(result) || result.projectId !== projectId)
       throw new ConnectionError('INCOMPATIBLE', 'Сервер вернул неподдерживаемый контекст проекта.');

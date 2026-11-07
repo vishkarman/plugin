@@ -77,10 +77,10 @@ export function registerWorkspaceTools(ctx: Context, connection: Connection, cre
   ctx.tools.register(defineTool({
     name: 'vishvakarma_workspace_sync',
     description: 'Синхронизировать исходники проекта в рабочую папку чата и записать манифест ревизии. Вызывайте перед редактированием локальных файлов; устаревшая папка не должна публиковаться.',
-    parameters: { projectId: { type: 'string', required: true, description: 'Идентификатор проекта' } },
+    parameters: { projectId: { type: 'string', required: true, description: 'Идентификатор проекта' }, files: { type: 'array', items: { type: 'string' }, description: 'Необязательно: синхронизировать только эти пути' } },
     output, isConcurrencySafe: () => false,
-    execute: async ({ projectId }, exec) => run(async () => {
-      const context = await connection.adapterProject(String(projectId), false, undefined, exec.signal);
+    execute: async ({ projectId, files }, exec) => run(async () => {
+      const context = await connection.adapterProject(String(projectId), false, undefined, exec.signal, Array.isArray(files) ? files.map(String) : undefined);
       const manifest = await syncWorkspaceFromContext(context, workspaceRootFor(credentialsFile, exec), credentialsFile);
       return { projectId: manifest.projectId, revisionId: manifest.revisionId, files: Object.keys(manifest.files) };
     }),

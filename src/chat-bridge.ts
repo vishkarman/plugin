@@ -583,6 +583,7 @@ function chatPrompt(request: AgentChatClaim, previous: { role: string; body: str
     '',
     'Перед редактированием локальных файлов вызови vishvakarma_workspace_sync; старая рабочая копия недействительна после правок в Studio. vishvakarma_import_files не перезаписывает существующие файлы без синхронизированного манифеста.',
     'Для структурных правок существующих исходников предпочитай vishvakarma_patch_files с точными find→replace по закреплённой базе; он не требует передавать файл целиком.',
+    'Если работаешь только с несколькими файлами, передай их пути в vishvakarma_workspace_sync — не тяни весь проект.',
     'Практически: для одной цели используй vishvakarma_read_target и vishvakarma_edit_target; не читай проект целиком и не дублируй проверки bash. Готовые локальные файлы публикуй через vishvakarma_import_files. Ответь в чат Студии через vishvakarma_chat action reply (или ask) с requestId ' + request.id + '; обычным сообщением DSH не отвечай. Пиши по-русски, мужской род, без технических ID/ревизий и без повтора текста пользователя.',
   ].join('\n');
 }
