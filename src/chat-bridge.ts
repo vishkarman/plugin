@@ -158,14 +158,15 @@ export class ChatBridge {
     } catch { /* reconnect later */ }
   }
 
-  private async measureContext(): Promise<{ projectId: string; totalTokens: number; compacting?: boolean } | null> {
+  private async measureContext(): Promise<{ projectId: string; totalTokens: number; compacting?: boolean; canCompact?: boolean } | null> {
     if (!this.lastProjectId || !this.lastSessionId) return null;
     try {
       const found = await this.resolveAgentAny(this.lastSessionId);
       const session = found && !('error' in found) ? found.agent?.session : null;
       const meter = this.ctx.get('tokenMeter') as any;
       const measured = session && meter?.measure ? await Promise.resolve(meter.measure(session)) : null;
-      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
+      const compaction = this.ctx.get('compaction') as any;
+      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')), canCompact: typeof compaction?.compactNow === 'function' };
     } catch { return null; }
   }
 

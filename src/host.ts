@@ -27,7 +27,7 @@ import type { GenerateMediaRequest, GenerateMediaResult, MediaProfileSummary, Me
 import type { MediaConfig } from './media-profiles.js';
 
 export const name = 'vishvakarma';
-export const inject = ['tools', 'skills', 'typert'];
+export const inject = ['tools', 'skills', 'typert', 'compaction', 'tokenMeter'];
 export const Config = Schema.object({
   serverUrl: Schema.string().default('http://127.0.0.1:3000').description('Loopback origin Studio; при изменении подключитесь заново.'),
   credentialsFile: Schema.string().default(defaultCredentialsFile).description('Абсолютный путь к приватному JSON подключения; токен не помещайте в конфигурацию DSH.'),

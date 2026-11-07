@@ -85,6 +85,7 @@ export const ChatContextInfo = Type.Object({
   totalTokens: Type.Integer({ minimum: 0 }),
   contextWindow: Type.Optional(Type.Integer({ minimum: 0 })),
   compacting: Type.Optional(Type.Boolean()),
+  canCompact: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 export type ChatContextState = Static<typeof ChatContextInfo>;
 export const ChatPresence = Type.Object({

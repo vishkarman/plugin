@@ -293,7 +293,7 @@ export class Connection {
     const query = limit === undefined ? '' : '?limit=' + encodeURIComponent(String(limit));
     return request(this.origin, '/api/v1/projects/' + encodeURIComponent(projectId) + '/chat/history' + query, token, undefined, signal);
   }
-  async chatPresence(instanceId: string, online: boolean, context?: { projectId: string; totalTokens: number; compacting?: boolean }, signal?: AbortSignal): Promise<{ online: boolean; compact?: { id: string; projectId: string } | null }> {
+  async chatPresence(instanceId: string, online: boolean, context?: { projectId: string; totalTokens: number; compacting?: boolean; canCompact?: boolean }, signal?: AbortSignal): Promise<{ online: boolean; compact?: { id: string; projectId: string } | null }> {
     const { token } = await this.credentials(signal);
     return request(this.origin, '/api/v1/agent/presence', token, { instanceId, online, ...(context ? { context } : {}) }, signal, 'POST');
   }
