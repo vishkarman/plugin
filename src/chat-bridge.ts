@@ -51,6 +51,7 @@ export class ChatBridge {
   private compacting = false;
   private lastAutoCompactAt = 0;
   private compactionService: any = null;
+  private agentPresets: any = null;
   private lastAutoError = '';
   private instanceId = '';
   private accountId = '';
@@ -63,7 +64,7 @@ export class ChatBridge {
     this.stateFile = join(this.stateDir, 'instance.json');
     this.bindingFile = join(this.stateDir, 'sessions.json');
     (this.ctx as any).on?.('session/event', (session: any) => this.trackSessionUsage(session));
-    try { (this.ctx as any).inject?.(['compaction'], (child: any) => { this.compactionService = child?.compaction ?? null; }); } catch { /* optional capability */ }
+    try { (this.ctx as any).inject?.(['agentPresets'], (child: any) => { this.agentPresets = child?.agentPresets ?? null; }); } catch { /* optional capability */ }
   }
 
   /** Accumulate provider usage for every session, including subagents spawned by a project turn. */
@@ -193,18 +194,20 @@ export class ChatBridge {
       const totalTokens = Math.max(0, Number(measured?.totalTokens) || 0);
       if (totalTokens > this.contextBudget && this.active.size === 0 && !this.compacting && Date.now() - this.lastAutoCompactAt > 60_000) {
         this.lastAutoCompactAt = Date.now();
-        void this.writeContextDebug({ totalTokens, contextBudget: this.contextBudget, active: this.active.size, compacting: this.compacting, injected: !!this.compactionService, direct: !!this.ctx.get('compaction'), root: !!((this.ctx as any).root?.get?.('compaction')), lastError: this.lastAutoError });
+        void this.writeContextDebug({ totalTokens, contextBudget: this.contextBudget, active: this.active.size, compacting: this.compacting, preset: !!this.agentPresets, engine: !!this.compactionHandle(agent), lastError: this.lastAutoError });
         void this.autoCompact(agent);
       }
       return { projectId: this.lastProjectId, totalTokens, ...(contextWindow ? { contextWindow } : {}), contextBudget: this.contextBudget, compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
     } catch { return null; }
   }
 
-  private compactionHandle() {
-    const direct = this.compactionService ?? this.ctx.get('compaction');
-    if (direct) return direct;
-    const root = (this.ctx as any).root;
-    return root?.get?.('compaction') ?? null;
+  private compactionHandle(agent: any) {
+    try {
+      const presets = this.agentPresets ?? this.ctx.get('agentPresets');
+      const engine = presets?.serviceFor?.(agent, 'compaction');
+      if (engine) return engine;
+    } catch { /* fall through to the host-scoped service for non-preset compositions */ }
+    return this.compactionService ?? this.ctx.get('compaction') ?? null;
   }
 
   private async writeContextDebug(data: Record<string, unknown>) {
@@ -215,7 +218,7 @@ export class ChatBridge {
     if (this.compacting || !agent) return;
     this.compacting = true;
     try {
-      const compaction = this.compactionHandle();
+      const compaction = this.compactionHandle(agent);
       if (typeof compaction?.compactNow !== 'function') { this.lastAutoError = 'compactNow unavailable'; return; }
       await compaction.compactNow(agent, AbortSignal.timeout(120_000));
     } catch (error) { this.lastAutoError = String((error as Error)?.message ?? error); }
@@ -229,7 +232,7 @@ export class ChatBridge {
       const session = await this.sessionFor(projectId);
       const found = await this.resolveAgentAny(session.sessionId);
       const agent = found && !('error' in found) ? found.agent : null;
-      const compaction = this.compactionService ?? this.ctx.get('compaction') as any;
+      const compaction = this.compactionHandle(agent);
       if (!agent || typeof compaction?.compactNow !== 'function') throw new Error('DSH не поддерживает ручную компактизацию.');
       await compaction.compactNow(agent, AbortSignal.timeout(180_000));
       await this.connection.chatCompactResult(compactId, 'done');
