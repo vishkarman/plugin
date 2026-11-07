@@ -53,6 +53,31 @@ export interface MediaGenerationOutcome {
   images: ProviderImage[];
 }
 
+function imageDimensions(data: Buffer): { width: number; height: number } | null {
+  if (data.length >= 24 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) {
+    return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
+  }
+  if (data.length >= 4 && data[0] === 0xff && data[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < data.length) {
+      if (data[offset] !== 0xff) { offset += 1; continue; }
+      const marker = data[offset + 1];
+      if (marker === 0xd8 || marker === 0xd9) { offset += 2; continue; }
+      const length = data.readUInt16BE(offset + 2);
+      if (length < 2) break;
+      if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
+        return { width: data.readUInt16BE(offset + 7), height: data.readUInt16BE(offset + 5) };
+      }
+      offset += 2 + length;
+    }
+  }
+  if (data.length >= 30 && data.subarray(0, 4).toString('latin1') === 'RIFF' && data.subarray(8, 12).toString('latin1') === 'WEBP') {
+    const format = data.subarray(12, 16).toString('latin1');
+    if (format === 'VP8X') return { width: data.readUIntLE(24, 3) + 1, height: data.readUIntLE(27, 3) + 1 };
+  }
+  return null;
+}
+
 export class MediaService {
   constructor(private readonly ctx: Context, private readonly connection: Connection, private readonly config: MediaConfig, private readonly policy?: AgentPolicy) {}
 
@@ -127,9 +152,11 @@ export class MediaService {
     }
     const source = input.sourceAsset ? context.assets.find(asset => asset.path === input.sourceAsset) ?? null : null;
     const references: ImageReference[] = [];
+    let previousBytes: Buffer | null = null;
     if (source && source.mime) {
-      const bytes = await this.connection.assetBytes(input.projectId, source.sha256, context.revisionId, signal);
-      references.push(bytes);
+      const fetched = await this.connection.assetBytes(input.projectId, source.sha256, context.revisionId, signal);
+      previousBytes = fetched.bytes;
+      references.push(fetched);
     }
     const count = input.replace ? 1 : Math.max(1, Math.min(profile.maxCount, input.count ?? 1));
     const outputFormat = input.outputFormat ?? profile.outputFormat ?? 'png';
@@ -147,6 +174,13 @@ export class MediaService {
       throw new MediaError('GENERATION_FAILED', 'Генерация изображения не удалась.', 'Повторите запрос или выберите другой профиль.');
     }
 
+    if (input.replace === true && source && previousBytes && providerResult.images.length === 1) {
+      const previous = imageDimensions(previousBytes);
+      const next = imageDimensions(providerResult.images[0].bytes);
+      if (previous && next && next.width * next.height < previous.width * previous.height * 0.85) {
+        throw new MediaError('QUALITY_REGRESSION', `Новое изображение меньше исходного: ${next.width}×${next.height} против ${previous.width}×${previous.height}.`, 'Сгенерируйте вариант не меньше исходного разрешения или не заменяйте файл.');
+      }
+    }
     let baseRevisionId = input.baseRevisionId ?? context.revisionId;
     const assets: GeneratedMediaAsset[] = [];
     for (let index = 0; index < providerResult.images.length; index += 1) {
