@@ -55,7 +55,7 @@ export class ChatBridge {
   private stopped = false;
   private timers: ReturnType<typeof setInterval>[] = [];
 
-  constructor(private readonly ctx: Context, private readonly connection: Connection, credentialsFile: string, private readonly policy?: AgentPolicy) {
+  constructor(private readonly ctx: Context, private readonly connection: Connection, credentialsFile: string, private readonly policy?: AgentPolicy, private readonly contextBudget = 131_072) {
     this.stateDir = join(dirname(credentialsFile), 'chat');
     this.stateFile = join(this.stateDir, 'instance.json');
     this.bindingFile = join(this.stateDir, 'sessions.json');
@@ -158,7 +158,7 @@ export class ChatBridge {
     } catch { /* reconnect later */ }
   }
 
-  private async measureContext(): Promise<{ projectId: string; totalTokens: number; contextWindow?: number; compacting?: boolean } | null> {
+  private async measureContext(): Promise<{ projectId: string; totalTokens: number; contextWindow?: number; contextBudget?: number; compacting?: boolean } | null> {
     if (!this.lastProjectId || !this.lastSessionId) return null;
     try {
       const found = await this.resolveAgentAny(this.lastSessionId);
@@ -186,7 +186,7 @@ export class ChatBridge {
         const snapshot = session && projections?.snapshot ? await Promise.resolve(projections.snapshot(session)).catch(() => null) : null;
         contextWindow = Number(snapshot?.contextPressure?.contextWindow) || undefined;
       }
-      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), ...(contextWindow ? { contextWindow } : {}), compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
+      return { projectId: this.lastProjectId, totalTokens: Math.max(0, Number(measured?.totalTokens) || 0), ...(contextWindow ? { contextWindow } : {}), contextBudget: this.contextBudget, compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
     } catch { return null; }
   }
 

@@ -34,6 +34,7 @@ export const Config = Schema.object({
   imageApiKeyEnv: Schema.string().default('OPENROUTER_API_KEY').description('Credential reference ключа OpenRouter; значение вводится в DSH Settings → Models, не в env.'),
   mediaDraftModel: Schema.string().default('google/gemini-2.5-flash-image').description('Модель OpenRouter для профиля core:draft.'),
   mediaFinalModel: Schema.string().default('google/gemini-3-pro-image').description('Модель OpenRouter для профиля core:final.'),
+  contextBudgetTokens: Schema.number().default(131072).description('Рабочий бюджет контекста проектного чата; должен совпадать с порогом компактизации DSH.'),
 });
 class StudioService extends TypertRemoteService {
   private readonly updates: PluginUpdates;
@@ -64,13 +65,13 @@ class StudioService extends TypertRemoteService {
   @Remote
   async updatePlugin(): Promise<UpdateStatus> { return this.updates.start('update'); }
 }
-export function apply(ctx: Context, config: ConnectionConfig & MediaConfig) {
+export function apply(ctx: Context, config: ConnectionConfig & MediaConfig & { contextBudgetTokens?: number }) {
   const connection = new Connection(config);
   const policy = new AgentPolicy();
   const media = new MediaService(ctx, connection, config, policy);
   new StudioService(ctx, connection, config, media);
   ctx.typert.remotes.register(studioRemote);
-  const chatBridge = new ChatBridge(ctx, connection, config.credentialsFile, policy);
+  const chatBridge = new ChatBridge(ctx, connection, config.credentialsFile, policy, config.contextBudgetTokens ?? 131_072);
   ctx.effect(() => chatBridge.start());
   registerChatTools(ctx, chatBridge);
   ctx.tools.register(defineTool({
