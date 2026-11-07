@@ -86,16 +86,11 @@ export const ChatContextInfo = Type.Object({
   contextWindow: Type.Optional(Type.Integer({ minimum: 0 })),
   contextBudget: Type.Optional(Type.Integer({ minimum: 0 })),
   compacting: Type.Optional(Type.Boolean()),
-  canCompact: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 export type ChatContextState = Static<typeof ChatContextInfo>;
 export const ChatPresence = Type.Object({
   instanceId: Type.String({ minLength: 1, maxLength: 120 }), online: Type.Boolean(),
   context: Type.Optional(ChatContextInfo),
-}, { additionalProperties: false });
-export const ChatCompactResult = Type.Object({
-  status: Type.Union([Type.Literal('done'), Type.Literal('failed')]),
-  error: Type.Optional(Type.String({ maxLength: 500 })),
 }, { additionalProperties: false });
 
 export type ChatRole = 'user' | 'agent' | 'system';
@@ -127,7 +122,6 @@ export interface ChatState {
   agentOnline: boolean;
   canUseAgent: boolean;
   agentContext?: ChatContextState | null;
-  compaction?: { status: 'requested' | 'done' | 'failed'; error?: string | null } | null;
 }
 export interface AgentChatRequest {
   id: string; messageId: string; message: string; projectId: string; context: ChatContextValue;

@@ -50,9 +50,7 @@ export class ChatBridge {
   private lastSessionId: string | null = null;
   private compacting = false;
   private lastAutoCompactAt = 0;
-  private compactionService: any = null;
   private agentPresets: any = null;
-  private lastAutoError = '';
   private instanceId = '';
   private accountId = '';
   private busy = false;
@@ -158,8 +156,7 @@ export class ChatBridge {
     if (!this.instanceId) return;
     try {
       const context = await this.measureContext();
-      const response = await this.connection.chatPresence(this.instanceId, online, context ?? undefined);
-      if (response?.compact) void this.compactSession(response.compact.id, response.compact.projectId);
+      await this.connection.chatPresence(this.instanceId, online, context ?? undefined);
     } catch { /* reconnect later */ }
   }
 
@@ -194,67 +191,30 @@ export class ChatBridge {
       const totalTokens = Math.max(0, Number(measured?.totalTokens) || 0);
       if (totalTokens > this.contextBudget && this.active.size === 0 && !this.compacting && Date.now() - this.lastAutoCompactAt > 60_000) {
         this.lastAutoCompactAt = Date.now();
-        void this.writeContextDebug({ totalTokens, contextBudget: this.contextBudget, active: this.active.size, compacting: this.compacting, preset: !!this.agentPresets, engine: !!this.compactionHandle(agent), lastError: this.lastAutoError });
         void this.autoCompact(agent);
       }
       return { projectId: this.lastProjectId, totalTokens, ...(contextWindow ? { contextWindow } : {}), contextBudget: this.contextBudget, compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
     } catch { return null; }
   }
 
-  private compactionHandle(agent: any) {
+  /** The compaction engine belongs to the preset revision held by this agent. */
+  private compactionEngine(agent: any) {
     try {
       const presets = this.agentPresets ?? this.ctx.get('agentPresets');
-      const engine = presets?.serviceFor?.(agent, 'compaction');
-      if (engine) return engine;
-    } catch { /* fall through to the host-scoped service for non-preset compositions */ }
-    return this.compactionService ?? this.ctx.get('compaction') ?? null;
+      return presets?.serviceFor?.(agent, 'compaction') ?? null;
+    } catch { return null; }
   }
 
-  private async writeContextDebug(data: Record<string, unknown>) {
-    try { await writeFile(join(this.stateDir, 'context-debug.json'), JSON.stringify({ at: new Date().toISOString(), ...data }, null, 2), { mode: 0o600 }); } catch { /* diagnostics only */ }
-  }
-
+  /** One serialized compaction attempt; DSH owns the summary and durable checkpoint. */
   private async autoCompact(agent: any) {
     if (this.compacting || !agent) return;
     this.compacting = true;
     try {
-      const compaction = this.compactionHandle(agent);
-      if (typeof compaction?.compactNow !== 'function') { this.lastAutoError = 'compactNow unavailable'; return; }
-      const signal = AbortSignal.timeout(120_000);
-      const result = await compaction.compactNow(agent, signal);
-      if (result) return;
-      // compactNow may decline when it cannot find a safe automatic range. Compact whole older
-      // turns explicitly and keep the current turn intact.
-      const events = agent?.session?.snapshotEvents?.() ?? [];
-      const lastTurn = events.map((event: any, index: number) => event?.type === 'turn/start' ? index : -1).filter((index: number) => index > 0).at(-1);
-      const first = events.findIndex((event: any) => event?.type === 'user/message' && Number.isInteger(event?.seq));
-      if (lastTurn === undefined || first < 0 || lastTurn <= first) { this.lastAutoError = 'no safe explicit range'; return; }
-      await compaction.compactRegion(events[first].seq, events[lastTurn - 1].seq, agent, signal);
-    } catch (error) { this.lastAutoError = String((error as Error)?.message ?? error); }
+      const engine = this.compactionEngine(agent);
+      if (typeof engine?.compactNow !== 'function') return;
+      await engine.compactNow(agent, AbortSignal.timeout(120_000));
+    } catch { /* busy or transport: retry after the interval */ }
     finally { this.compacting = false; }
-  }
-
-  private async compactSession(compactId: string, projectId: string) {
-    if (this.compacting) return;
-    this.compacting = true;
-    try {
-      const session = await this.sessionFor(projectId);
-      const found = await this.resolveAgentAny(session.sessionId);
-      const agent = found && !('error' in found) ? found.agent : null;
-      const compaction = this.compactionHandle(agent);
-      if (!agent || typeof compaction?.compactNow !== 'function') throw new Error('DSH не поддерживает ручную компактизацию.');
-      const signal = AbortSignal.timeout(180_000);
-      const result = await compaction.compactNow(agent, signal);
-      if (!result) {
-        const events = agent?.session?.snapshotEvents?.() ?? [];
-        const lastTurn = events.map((event: any, index: number) => event?.type === 'turn/start' ? index : -1).filter((index: number) => index > 0).at(-1);
-        const first = events.findIndex((event: any) => event?.type === 'user/message' && Number.isInteger(event?.seq));
-        if (lastTurn !== undefined && first >= 0 && lastTurn > first) await compaction.compactRegion(events[first].seq, events[lastTurn - 1].seq, agent, signal);
-      }
-      await this.connection.chatCompactResult(compactId, 'done');
-    } catch (error) {
-      await this.connection.chatCompactResult(compactId, 'failed', String((error as Error)?.message ?? error)).catch(() => {});
-    } finally { this.compacting = false; }
   }
 
   private async tick() {
