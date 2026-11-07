@@ -51,6 +51,7 @@ export class ChatBridge {
   private compacting = false;
   private lastAutoCompactAt = 0;
   private compactionService: any = null;
+  private lastAutoError = '';
   private instanceId = '';
   private accountId = '';
   private busy = false;
@@ -192,20 +193,32 @@ export class ChatBridge {
       const totalTokens = Math.max(0, Number(measured?.totalTokens) || 0);
       if (totalTokens > this.contextBudget && this.active.size === 0 && !this.compacting && Date.now() - this.lastAutoCompactAt > 60_000) {
         this.lastAutoCompactAt = Date.now();
+        void this.writeContextDebug({ totalTokens, contextBudget: this.contextBudget, active: this.active.size, compacting: this.compacting, injected: !!this.compactionService, direct: !!this.ctx.get('compaction'), root: !!((this.ctx as any).root?.get?.('compaction')), lastError: this.lastAutoError });
         void this.autoCompact(agent);
       }
       return { projectId: this.lastProjectId, totalTokens, ...(contextWindow ? { contextWindow } : {}), contextBudget: this.contextBudget, compacting: this.compactingSessions.has(this.lastSessionId.replace(/^session-/, '')) };
     } catch { return null; }
   }
 
+  private compactionHandle() {
+    const direct = this.compactionService ?? this.ctx.get('compaction');
+    if (direct) return direct;
+    const root = (this.ctx as any).root;
+    return root?.get?.('compaction') ?? null;
+  }
+
+  private async writeContextDebug(data: Record<string, unknown>) {
+    try { await writeFile(join(this.stateDir, 'context-debug.json'), JSON.stringify({ at: new Date().toISOString(), ...data }, null, 2), { mode: 0o600 }); } catch { /* diagnostics only */ }
+  }
+
   private async autoCompact(agent: any) {
     if (this.compacting || !agent) return;
     this.compacting = true;
     try {
-      const compaction = this.compactionService ?? this.ctx.get('compaction') as any;
-      if (typeof compaction?.compactNow !== 'function') return;
+      const compaction = this.compactionHandle();
+      if (typeof compaction?.compactNow !== 'function') { this.lastAutoError = 'compactNow unavailable'; return; }
       await compaction.compactNow(agent, AbortSignal.timeout(120_000));
-    } catch { /* busy or no range: try again after the interval */ }
+    } catch (error) { this.lastAutoError = String((error as Error)?.message ?? error); }
     finally { this.compacting = false; }
   }
 
