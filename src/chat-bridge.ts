@@ -50,6 +50,7 @@ export class ChatBridge {
   private lastSessionId: string | null = null;
   private compacting = false;
   private lastAutoCompactAt = 0;
+  private compactionService: any = null;
   private instanceId = '';
   private accountId = '';
   private busy = false;
@@ -61,6 +62,7 @@ export class ChatBridge {
     this.stateFile = join(this.stateDir, 'instance.json');
     this.bindingFile = join(this.stateDir, 'sessions.json');
     (this.ctx as any).on?.('session/event', (session: any) => this.trackSessionUsage(session));
+    try { (this.ctx as any).inject?.(['compaction'], (child: any) => { this.compactionService = child?.compaction ?? null; }); } catch { /* optional capability */ }
   }
 
   /** Accumulate provider usage for every session, including subagents spawned by a project turn. */
@@ -200,7 +202,7 @@ export class ChatBridge {
     if (this.compacting || !agent) return;
     this.compacting = true;
     try {
-      const compaction = this.ctx.get('compaction') as any;
+      const compaction = this.compactionService ?? this.ctx.get('compaction') as any;
       if (typeof compaction?.compactNow !== 'function') return;
       await compaction.compactNow(agent, AbortSignal.timeout(120_000));
     } catch { /* busy or no range: try again after the interval */ }
@@ -214,7 +216,7 @@ export class ChatBridge {
       const session = await this.sessionFor(projectId);
       const found = await this.resolveAgentAny(session.sessionId);
       const agent = found && !('error' in found) ? found.agent : null;
-      const compaction = this.ctx.get('compaction') as any;
+      const compaction = this.compactionService ?? this.ctx.get('compaction') as any;
       if (!agent || typeof compaction?.compactNow !== 'function') throw new Error('DSH не поддерживает ручную компактизацию.');
       await compaction.compactNow(agent, AbortSignal.timeout(180_000));
       await this.connection.chatCompactResult(compactId, 'done');
