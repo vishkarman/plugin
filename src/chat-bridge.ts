@@ -166,16 +166,21 @@ export class ChatBridge {
       const session = agent?.session ?? null;
       const meter = this.ctx.get('tokenMeter') as any;
       const measured = session && meter?.measure ? await Promise.resolve(meter.measure(session)) : null;
-      let provider = '', model = '';
+      let provider = '', model = '', contextWindow: number | undefined;
       for (const event of (session?.snapshotEvents?.() ?? []) as any[]) {
-        if (event?.type !== 'request/header') continue;
-        const config = event.data?.header?.config;
-        if (typeof config?.provider === 'string' && typeof config?.model === 'string') { provider = config.provider; model = config.model; }
+        if (event?.type === 'request/context') {
+          const window = Number(event.data?.contextWindow);
+          if (Number.isInteger(window) && window > 0) contextWindow = window;
+        }
+        if (event?.type === 'request/header') {
+          const config = event.data?.header?.config;
+          if (typeof config?.provider === 'string' && typeof config?.model === 'string') { provider = config.provider; model = config.model; }
+        }
       }
       const llm = this.ctx.get('llm') as any;
       const info = provider && model && typeof llm?.resolveModelInfo === 'function'
         ? await Promise.resolve(llm.resolveModelInfo(provider, model)).catch(() => null) : null;
-      let contextWindow = Number(info?.context?.contextWindow) || undefined;
+      contextWindow = contextWindow ?? (Number(info?.context?.contextWindow) || undefined);
       if (!contextWindow) {
         const projections = this.ctx.get('sessionProjections') as any;
         const snapshot = session && projections?.snapshot ? await Promise.resolve(projections.snapshot(session)).catch(() => null) : null;
