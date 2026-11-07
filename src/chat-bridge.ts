@@ -220,7 +220,16 @@ export class ChatBridge {
     try {
       const compaction = this.compactionHandle(agent);
       if (typeof compaction?.compactNow !== 'function') { this.lastAutoError = 'compactNow unavailable'; return; }
-      await compaction.compactNow(agent, AbortSignal.timeout(120_000));
+      const signal = AbortSignal.timeout(120_000);
+      const result = await compaction.compactNow(agent, signal);
+      if (result) return;
+      // compactNow may decline when it cannot find a safe automatic range. Compact whole older
+      // turns explicitly and keep the current turn intact.
+      const events = agent?.session?.snapshotEvents?.() ?? [];
+      const lastTurn = events.map((event: any, index: number) => event?.type === 'turn/start' ? index : -1).filter((index: number) => index > 0).at(-1);
+      const first = events.findIndex((event: any) => event?.type === 'user/message' && Number.isInteger(event?.seq));
+      if (lastTurn === undefined || first < 0 || lastTurn <= first) { this.lastAutoError = 'no safe explicit range'; return; }
+      await compaction.compactRegion(events[first].seq, events[lastTurn - 1].seq, agent, signal);
     } catch (error) { this.lastAutoError = String((error as Error)?.message ?? error); }
     finally { this.compacting = false; }
   }
@@ -234,7 +243,14 @@ export class ChatBridge {
       const agent = found && !('error' in found) ? found.agent : null;
       const compaction = this.compactionHandle(agent);
       if (!agent || typeof compaction?.compactNow !== 'function') throw new Error('DSH не поддерживает ручную компактизацию.');
-      await compaction.compactNow(agent, AbortSignal.timeout(180_000));
+      const signal = AbortSignal.timeout(180_000);
+      const result = await compaction.compactNow(agent, signal);
+      if (!result) {
+        const events = agent?.session?.snapshotEvents?.() ?? [];
+        const lastTurn = events.map((event: any, index: number) => event?.type === 'turn/start' ? index : -1).filter((index: number) => index > 0).at(-1);
+        const first = events.findIndex((event: any) => event?.type === 'user/message' && Number.isInteger(event?.seq));
+        if (lastTurn !== undefined && first >= 0 && lastTurn > first) await compaction.compactRegion(events[first].seq, events[lastTurn - 1].seq, agent, signal);
+      }
       await this.connection.chatCompactResult(compactId, 'done');
     } catch (error) {
       await this.connection.chatCompactResult(compactId, 'failed', String((error as Error)?.message ?? error)).catch(() => {});
