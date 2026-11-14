@@ -72,13 +72,13 @@ SDK DSH предоставляется приложением, а не отде�
 ## Публикация релиза
 
 У пакета один канал обновлений: npm-тег `latest` всегда указывает на последнюю
-опубликованную версию. Не задавайте дополнительный тег при публикации:
+опубликованную версию. Для prerelease npm требует явно указать тег:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
 pnpm pack
-npm publish --access public
+npm publish --access public --tag latest
 ```
 
 Перед публикацией проверьте `npm pack --dry-run`, `pnpm update:dsh --check`
