@@ -78,6 +78,7 @@ export function updateView(ctx: Context) {
     return h(HostDialog, { title: 'Обновление Vishvakarma', close, headerAction: h(ToolbarButton, { icon: 'close', label: 'Закрыть обновление', onClick: close }) },
       !status ? h('p', null, 'Читаем состояние плагина…') : h('div', null,
         h('p', null, `Установлено: ${status.installedVersion}`),
+        h('p', { style: { fontSize: 12, opacity: .75 } }, status.localInstall ? 'Источник: локальная сборка (разработка)' : 'Источник: опубликованная версия из npm'),
         status.runningVersion !== status.installedVersion ? h('p', null, `Сейчас работает: ${status.runningVersion}`) : null,
         status.latestVersion && status.latestVersion !== status.installedVersion ? h('p', null, `Доступна версия: ${status.latestVersion}`) : null,
         status.sourceVersion ? h('p', null, `Версия исходников: ${status.sourceVersion} (локальная сборка)`): null,
