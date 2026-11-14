@@ -47,17 +47,20 @@ pnpm pack
 
 ### Установка из npm
 
-После публикации пакет устанавливается штатным менеджером DSH. Для версии
-`0.12.0-stage.6` используйте точную версию или тег `stage`:
+Пакет публикуется в один канал: npm-тег `latest` всегда указывает на последнюю
+опубликованную версию. Устанавливайте без версии и тега:
 
 ```sh
-dsh plugin --profile desktop add @vishkarman/plugin@0.12.0-stage.6
-# либо: @vishkarman/plugin@stage
+dsh plugin --profile desktop add @vishkarman/plugin
 ```
 
 В Desktop то же действие доступно через **Plugins → Add plugin**: укажите
-`@vishkarman/plugin@0.12.0-stage.6`, затем **Enable now**. После установки
-проверьте **Components → Running**; если DSH просит перезапуск, перезапустите профиль.
+`@vishkarman/plugin`, затем **Enable now**. После установки проверьте
+**Components → Running**; если DSH просит перезапуск, перезапустите профиль.
+
+Для воспроизводимой установки можно явно указать точную версию, например
+`@vishkarman/plugin@0.12.0-stage.6`, но для обычного обновления достаточно
+короткой команды выше.
 
 Пакет включает собранные Host/Client, bundle patch, копию контрактов и скилл.
 Соседний checkout сервера и исходники плагина для его работы не нужны.
@@ -68,14 +71,14 @@ SDK DSH предоставляется приложением, а не отде�
 
 ## Публикация релиза
 
-Релиз собирается из чистого checkout и публикуется в npm с тегом `stage`,
-чтобы prerelease не становился `latest`:
+У пакета один канал обновлений: npm-тег `latest` всегда указывает на последнюю
+опубликованную версию. Не задавайте дополнительный тег при публикации:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
 pnpm pack
-npm publish --access public --tag stage
+npm publish --access public
 ```
 
 Перед публикацией проверьте `npm pack --dry-run`, `pnpm update:dsh --check`
