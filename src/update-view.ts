@@ -17,13 +17,17 @@ export function updateView(ctx: Context) {
   let opened = false;
   try { opened = sessionStorage.getItem(storageKey) === 'open'; } catch {}
   const listeners = new Set<() => void>();
-  let updateAvailable = false;
+  let updateAvailable = false, localInstall = false;
   let noticeRequest: Promise<void> | undefined;
   const refreshNotice = () => noticeRequest ??= (async () => {
     try {
       const reply = await ctx.remote.vishvakarma.updateNotice();
       updateAvailable = reply.ok && reply.value === 'changed';
     } catch { updateAvailable = false; }
+    try {
+      const status = await ctx.remote.vishvakarma.updateStatus();
+      localInstall = status.ok && status.value.localInstall;
+    } catch { localInstall = false; }
     for (const listener of listeners) listener();
   })().finally(() => { noticeRequest = undefined; });
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
@@ -99,6 +103,7 @@ export function updateView(ctx: Context) {
   }
   function UpdateButton({ active = true, compact = false }: { active?: boolean; compact?: boolean }) {
     const available = useSyncExternalStore(subscribe, () => updateAvailable);
+    const local = useSyncExternalStore(subscribe, () => localInstall);
     useEffect(() => {
       if (!active) return;
       const refresh = () => { if (document.visibilityState === 'visible') void refreshNotice(); };
@@ -106,6 +111,7 @@ export function updateView(ctx: Context) {
       window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
       return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
     }, [active]);
+    if (compact && !available && !local) return null;
     const label = available ? 'Доступно обновление плагина' : 'Обновление плагина';
     return compact ? h(ToolbarButton, { icon: 'update', label, badge: available, onClick: () => show(true) })
       : h('span', { className: 'vishvakarma-plugin-ui' }, h(Button, { type: 'button', variant: 'outline', title: label, onClick: () => show(true) }, available ? 'Обновление плагина · доступно' : 'Обновление плагина'));
