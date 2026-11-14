@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ProfileContext } from '@deepseek-ai/dsh-app-boot';
-import type { PluginManager } from '@deepseek-ai/dsh-plugin-manager';
+import type { PluginManager, PluginVersion } from '@deepseek-ai/dsh-plugin-manager';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -29,6 +29,7 @@ type Job = {
   pid: number; id: string; phase: UpdateStatus['phase']; message: string; logPath: string;
   candidate?: Candidate; restartRequired?: boolean;
 };
+type ReleaseCheck = { canUpdate: boolean; latestVersion: string; registry: string | null; message: string };
 const busy = (phase: string) => ['checking', 'building', 'installing'].includes(phase);
 async function json(file: string) { return JSON.parse(await readFile(file, 'utf8')); }
 async function optionalJson(file: string) { try { return await json(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; } }
@@ -51,6 +52,7 @@ export class PluginUpdates {
   private readonly settingsFile: string;
   private readonly lockFile: string;
   private noticeCache?: { key: string; expires: number; result: Promise<UpdateNotice> };
+  private releaseCache?: { expires: number; result: Promise<ReleaseCheck> };
   constructor(private readonly ctx: Context, private readonly config: Config) {
     this.profile = ctx.get('profileContext');
     const key = sha(this.profile?.dir ?? 'unavailable').slice(0, 16);
@@ -65,15 +67,42 @@ export class PluginUpdates {
   }
   private packageFile() { return join(this.profile!.dir, 'node_modules', packageName, 'package.json'); }
   private async installedVersion() { return this.profile ? (await json(this.packageFile())).version as string : runningVersion; }
+  private async releaseCheck(force = false): Promise<ReleaseCheck> {
+    if (!force && this.releaseCache && this.releaseCache.expires > Date.now()) return this.releaseCache.result;
+    const result = this.computeRelease();
+    this.releaseCache = { expires: Date.now() + 30000, result };
+    return result;
+  }
+  private async computeRelease(): Promise<ReleaseCheck> {
+    const unavailable = (message: string): ReleaseCheck => ({ canUpdate: false, latestVersion: '', registry: null, message });
+    if (!this.profile || !this.manager()) return unavailable('Менеджер плагинов DSH недоступен.');
+    try {
+      const manager = this.manager()!;
+      const bundle = (await manager.listBundles()).find(item => item.name === packageName);
+      if (!bundle) return unavailable('Плагин не найден в профиле DSH.');
+      if (bundle.update !== 'registry') return unavailable('Обновления из npm недоступны для этой установки. Используйте локальную сборку.');
+      const list = await manager.listVersions(packageName);
+      if (list.status !== 'listed') return unavailable(list.reason || 'Не удалось прочитать версии из npm.');
+      const candidate: PluginVersion | undefined = list.versions.find(version => version.bundle && !version.incompatible);
+      if (candidate) return { canUpdate: true, latestVersion: candidate.version, registry: list.registry, message: `Доступна версия ${candidate.version}.` };
+      const incompatible = list.versions.find(version => version.bundle && version.incompatible);
+      if (incompatible) return unavailable(`Версия ${incompatible.version} несовместима с этим DSH.`);
+      return { canUpdate: false, latestVersion: '', registry: list.registry, message: 'Установлена последняя версия.' };
+    } catch (error) {
+      return unavailable('Не удалось проверить обновления: ' + (error instanceof Error ? error.message : 'неизвестная ошибка'));
+    }
+  }
   async notice(): Promise<UpdateNotice> {
     try {
+      const release = await this.releaseCheck();
+      if (release.canUpdate) return 'changed';
       const settings = await this.settings();
-      if (!this.profile || !settings.development || !isAbsolute(settings.directory)) return 'unknown';
+      if (!this.profile || !settings.development || !isAbsolute(settings.directory)) return 'current';
       const installed = await this.installedVersion(), key = settings.directory + '\0' + installed;
       if (this.noticeCache?.key === key && this.noticeCache.expires > Date.now()) return this.noticeCache.result;
       const result = (async (): Promise<UpdateNotice> => {
         const info = await optionalJson(join(dirname(this.packageFile()), 'dist/build-info.json'));
-        if (!info?.sourceFingerprint) return 'unknown';
+        if (!info?.sourceFingerprint) return 'current';
         const pkg = await json(join(settings.directory, 'package.json'));
         if (pkg.name !== packageName) return 'unknown';
         return await sourceFingerprint(settings.directory) === info.sourceFingerprint ? 'current' : 'changed';
@@ -95,13 +124,17 @@ export class PluginUpdates {
   }
   async status(): Promise<UpdateStatus> {
     const state = await this.state(), settings = await this.settings(), installedVersion = await this.installedVersion();
+    const release = await this.releaseCheck();
     const available = Boolean(this.profile && this.manager());
     const restartRequired = installedVersion !== runningVersion || Boolean(state?.restartRequired && state.candidate?.version !== runningVersion);
+    const stateMessage = state && !['idle', 'done'].includes(state.phase) ? state.message : '';
+    const message = !available ? 'Обновление доступно в профиле DSH с включённым менеджером плагинов.'
+      : release.canUpdate ? release.message : stateMessage || release.message;
     return {
       available, profile: this.profile?.name ?? '', profileDirectory: this.profile?.dir ?? '', runningVersion, installedVersion,
-      sourceVersion: state?.candidate?.sourceVersion ?? '', settings, phase: state?.phase ?? 'idle',
-      message: !available ? 'Обновление доступно в профиле DSH с включённым менеджером плагинов.' : state?.message ?? (settings.development ? 'Нажмите «Проверить обновление», чтобы проверить исходники и совместимость.' : 'Выберите источник обновления в настройках.'),
-      canUpdate: available && settings.development && state?.phase === 'ready' && !restartRequired,
+      latestVersion: release.latestVersion, sourceVersion: state?.candidate?.sourceVersion ?? '', settings, phase: state?.phase ?? 'idle',
+      message,
+      canUpdate: !restartRequired && (release.canUpdate || (settings.development && state?.phase === 'ready')),
       restartRequired, logPath: state?.logPath ?? '',
     };
   }
@@ -139,19 +172,53 @@ export class PluginUpdates {
   async start(action: 'check' | 'install' | 'update'): Promise<UpdateStatus> {
     if (!this.profile || !this.manager()) throw new Error('Менеджер плагинов DSH недоступен.');
     const settings = await this.settings();
-    if (!settings.development) throw new Error('Готовые выпуски ещё не подключены. Для локальной сборки включите режим разработчика.');
+    const release = await this.releaseCheck(true);
     if (await this.installedVersion() !== runningVersion) throw new Error('Сначала перезапустите DSH, чтобы загрузить уже установленную версию.');
+    if (action === 'check' && (release.canUpdate || !settings.development)) return this.status();
+    if (action === 'update' && release.canUpdate) {
+      await this.lock();
+      try {
+        const job: Job = { pid: process.pid, id: randomUUID(), phase: 'installing', message: `Устанавливаем ${release.latestVersion} из npm…`, logPath: '' };
+        await atomicJson(this.stateFile, job);
+        // The manager belongs to DSH, not this plugin. Do not cancel this promise on
+        // plugin disposal: HMR may unload our UI while the manager finishes its work.
+        void this.executeRelease(release, job).catch(() => {}).finally(() => rm(this.lockFile, { force: true }));
+      } catch (e) { await rm(this.lockFile, { force: true }); throw e; }
+      return this.status();
+    }
+    if (!settings.development) throw new Error(release.message || 'Обновлений нет.');
     await this.lock();
     try {
       const old = await this.state();
       if (action === 'install' && old?.phase !== 'ready') throw new Error('Сначала проверьте обновление.');
       const job: Job = { pid: process.pid, id: randomUUID(), phase: action === 'check' ? 'checking' : 'building', message: action === 'check' ? 'Проверяем исходники и совместимость…' : action === 'update' ? 'Проверяем, собираем и устанавливаем обновление…' : 'Собираем обновление…', logPath: '', candidate: action === 'install' ? old?.candidate : undefined };
       await atomicJson(this.stateFile, job);
-      // The manager belongs to DSH, not this plugin. Do not cancel this promise on
-      // plugin disposal: HMR may unload our UI while the manager finishes its work.
       void this.execute(action, settings, job).catch(() => {}).finally(() => rm(this.lockFile, { force: true }));
     } catch (e) { await rm(this.lockFile, { force: true }); throw e; }
     return this.status();
+  }
+  private async executeRelease(release: ReleaseCheck, job: Job) {
+    try {
+      const manager = this.manager();
+      if (!manager) throw new Error('Менеджер плагинов DSH отключён.');
+      await atomicJson(this.stateFile, job);
+      const result = await manager.updateBundle(packageName, release.latestVersion, release.registry ? { registry: release.registry } : undefined);
+      const change = result.result;
+      if (change.packageResult?.logPath) job.logPath = change.packageResult.logPath;
+      if (change.application === 'failed' || change.application === 'cancelled') {
+        throw new Error(change.error?.diagnostic || change.error?.code || 'DSH не установил обновление.');
+      }
+      job.phase = 'done';
+      job.restartRequired = change.application === 'restart-required';
+      job.message = job.restartRequired ? 'Обновление установлено. Перезапустите DSH.' : 'Обновление установлено и применено DSH.';
+    } catch (e) {
+      job.phase = 'error';
+      job.message = e instanceof Error ? e.message : 'Не удалось установить обновление.';
+    } finally {
+      this.releaseCache = undefined;
+      this.noticeCache = undefined;
+      await atomicJson(this.stateFile, job);
+    }
   }
   private async execute(action: 'check' | 'install' | 'update', settings: UpdateSettings, job: Job) {
     try {

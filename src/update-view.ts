@@ -63,23 +63,25 @@ export function updateView(ctx: Context) {
     useEffect(() => { if (status && !busy) void refreshNotice(); }, [status?.phase, status?.settings.development, status?.settings.directory, busy]);
     const dirty = draft && status && (draft.development !== status.settings.development || draft.directory !== status.settings.directory);
     const blockedReason = !status ? '' : !status.available ? 'Менеджер плагинов DSH недоступен.'
-      : !status.settings.development ? 'Включите режим разработчика и сохраните источник обновлений.'
       : status.restartRequired ? 'Установленная версия ещё не загружена. Перезапустите DSH и проверьте Components → Running.'
-      : Boolean(dirty) ? 'Сохраните настройки источника обновлений.' : '';
-    const primaryLabel = status?.restartRequired ? 'Перезапустите DSH' : busy ? 'Обновляем…' : status?.phase === 'ready' ? 'Обновить плагин' : 'Проверить и обновить';
+      : Boolean(dirty) && !status.latestVersion ? 'Сохраните настройки источника обновлений.' : '';
+    const primaryLabel = status?.restartRequired ? 'Перезапустите DSH' : busy ? 'Обновляем…'
+      : status?.canUpdate ? (status.latestVersion ? 'Обновить до ' + status.latestVersion : 'Обновить плагин')
+      : 'Проверить обновление';
     return h(HostDialog, { title: 'Обновление Vishvakarma', close, headerAction: h(ToolbarButton, { icon: 'close', label: 'Закрыть обновление', onClick: close }) },
       !status ? h('p', null, 'Читаем состояние плагина…') : h('div', null,
         h('p', null, `Установлено: ${status.installedVersion}`),
         status.runningVersion !== status.installedVersion ? h('p', null, `Сейчас работает: ${status.runningVersion}`) : null,
+        status.latestVersion && status.latestVersion !== status.installedVersion ? h('p', null, `Доступна версия: ${status.latestVersion}`) : null,
         status.sourceVersion ? h('p', null, `Версия исходников: ${status.sourceVersion} (локальная сборка)`): null,
         h('p', { style: { overflowWrap: 'anywhere', fontSize: 13 } }, `Профиль текущего окна: ${status.profile} · ${status.profileDirectory}`),
         h(Alert, { role: 'status', 'aria-live': 'polite', className: 'vkp:mt-3' }, status.message),
         h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0 8px' } },
-          h(Button, { type: 'button', disabled: busy || Boolean(blockedReason), onClick: () => void action(() => ctx.remote.vishvakarma.updatePlugin()) }, primaryLabel)),
+          h(Button, { type: 'button', disabled: busy || Boolean(blockedReason), onClick: () => void action(() => status.canUpdate ? ctx.remote.vishvakarma.updatePlugin() : ctx.remote.vishvakarma.checkUpdate()) }, primaryLabel)),
         blockedReason ? h('p', { style: { fontSize: 12, opacity: .75, margin: '0 0 12px' } }, blockedReason) : null,
-        draft ? h('details', { open: !status.settings.development || Boolean(dirty) },
+        draft ? h('details', { open: status.settings.development || Boolean(dirty) },
           h('summary', null, 'Источник обновлений'),
-          h('p', null, 'Загрузка готовых выпусков пока не подключена. Для локальной разработки можно собирать плагин из своих исходников.'),
+          h('p', null, 'Обычно обновление устанавливается из npm. Режим разработчика нужен только для локальной сборки плагина из исходников.'),
           h(Label, { className: 'vkp:flex vkp:items-center vkp:gap-2 vkp:my-3' },
             h(Checkbox, { checked: draft.development, disabled: busy, onCheckedChange: checked => setDraft({ ...draft, development: checked === true }) }), 'Режим разработчика'),
           draft.development ? h(Label, { className: 'vkp:block' }, 'Папка исходников plugin',
@@ -98,9 +100,9 @@ export function updateView(ctx: Context) {
       window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
       return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
     }, [active]);
-    const label = available ? 'Обновление плагина: есть изменения в исходниках' : 'Обновление плагина';
+    const label = available ? 'Доступно обновление плагина' : 'Обновление плагина';
     return compact ? h(ToolbarButton, { icon: 'update', label, badge: available, onClick: () => show(true) })
-      : h('span', { className: 'vishvakarma-plugin-ui' }, h(Button, { type: 'button', variant: 'outline', title: label, onClick: () => show(true) }, available ? 'Обновление плагина · есть изменения' : 'Обновление плагина'));
+      : h('span', { className: 'vishvakarma-plugin-ui' }, h(Button, { type: 'button', variant: 'outline', title: label, onClick: () => show(true) }, available ? 'Обновление плагина · доступно' : 'Обновление плагина'));
   }
   function UpdateOverlay() {
     const visible = useSyncExternalStore(subscribe, () => opened);
