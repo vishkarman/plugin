@@ -62,12 +62,19 @@ export function updateView(ctx: Context) {
     const busy = pending || Boolean(status && ['checking', 'building', 'installing'].includes(status.phase));
     useEffect(() => { if (status && !busy) void refreshNotice(); }, [status?.phase, status?.settings.development, status?.settings.directory, busy]);
     const dirty = draft && status && (draft.development !== status.settings.development || draft.directory !== status.settings.directory);
+    const local = Boolean(status?.localInstall);
+    const localNeedsPath = local && status && !status.settings.directory.trim();
     const blockedReason = !status ? '' : !status.available ? 'Менеджер плагинов DSH недоступен.'
       : status.restartRequired ? 'Установленная версия ещё не загружена. Перезапустите DSH и проверьте Components → Running.'
-      : Boolean(dirty) && !status.latestVersion ? 'Сохраните настройки источника обновлений.' : '';
-    const primaryLabel = status?.restartRequired ? 'Перезапустите DSH' : busy ? 'Обновляем…'
+      : localNeedsPath ? 'Укажите папку исходников и сохраните настройки.'
+      : local && dirty ? 'Сохраните путь к папке исходников.'
+      : !local && Boolean(dirty) && !status.latestVersion ? 'Сохраните настройки.' : '';
+    const primaryLabel = status?.restartRequired ? 'Перезапустите DSH' : busy ? (local ? 'Собираем…' : 'Обновляем…')
+      : local ? 'Собрать и установить'
       : status?.canUpdate ? (status.latestVersion ? 'Обновить до ' + status.latestVersion : 'Обновить плагин')
       : 'Проверить обновление';
+    const primaryAction = () => local ? ctx.remote.vishvakarma.updateLocal()
+      : status?.canUpdate ? ctx.remote.vishvakarma.updatePlugin() : ctx.remote.vishvakarma.checkUpdate();
     return h(HostDialog, { title: 'Обновление Vishvakarma', close, headerAction: h(ToolbarButton, { icon: 'close', label: 'Закрыть обновление', onClick: close }) },
       !status ? h('p', null, 'Читаем состояние плагина…') : h('div', null,
         h('p', null, `Установлено: ${status.installedVersion}`),
@@ -77,17 +84,15 @@ export function updateView(ctx: Context) {
         h('p', { style: { overflowWrap: 'anywhere', fontSize: 13 } }, `Профиль текущего окна: ${status.profile} · ${status.profileDirectory}`),
         h(Alert, { role: 'status', 'aria-live': 'polite', className: 'vkp:mt-3' }, status.message),
         h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0 8px' } },
-          h(Button, { type: 'button', disabled: busy || Boolean(blockedReason), onClick: () => void action(() => status.canUpdate ? ctx.remote.vishvakarma.updatePlugin() : ctx.remote.vishvakarma.checkUpdate()) }, primaryLabel)),
+          h(Button, { type: 'button', disabled: busy || Boolean(blockedReason), onClick: () => void action(primaryAction) }, primaryLabel)),
         blockedReason ? h('p', { style: { fontSize: 12, opacity: .75, margin: '0 0 12px' } }, blockedReason) : null,
-        draft ? h('details', { open: status.settings.development || Boolean(dirty) },
-          h('summary', null, 'Источник обновлений'),
-          h('p', null, 'Обычно обновление устанавливается из npm. Режим разработчика нужен только для локальной сборки плагина из исходников.'),
-          h(Label, { className: 'vkp:flex vkp:items-center vkp:gap-2 vkp:my-3' },
-            h(Checkbox, { checked: draft.development, disabled: busy, onCheckedChange: checked => setDraft({ ...draft, development: checked === true }) }), 'Режим разработчика'),
-          draft.development ? h(Label, { className: 'vkp:block' }, 'Папка исходников plugin',
+        local && draft ? h('details', { open: true },
+          h('summary', null, 'Локальная сборка'),
+          h('p', null, 'Плагин установлен из локального источника. Сборка берёт файлы из указанной папки и не требует публикации в npm.'),
+          h(Label, { className: 'vkp:block' }, 'Папка исходников plugin',
             h(Input, { type: 'text', value: draft.directory, disabled: busy, placeholder: '/absolute/path/to/plugin', onChange: e => setDraft({ ...draft, directory: e.currentTarget.value }), className: 'vkp:my-2' }),
-            h('span', { style: { fontSize: 13 } }, 'Сборка запускает код из этой папки. Указывайте собственный checkout с установленными зависимостями.')) : null,
-          h(Button, { type: 'button', disabled: busy || !dirty || !status.available, style: { marginTop: 12 }, onClick: () => void action(() => ctx.remote.vishvakarma.saveUpdateSettings(draft)) }, 'Сохранить настройки')) : null,
+            h('span', { style: { fontSize: 13 } }, 'Указывайте собственный checkout с установленными зависимостями.')),
+          h(Button, { type: 'button', disabled: busy || !dirty || !status.available, style: { marginTop: 12 }, onClick: () => void action(() => ctx.remote.vishvakarma.saveUpdateSettings({ ...draft, development: true })) }, 'Сохранить путь')) : null,
         status.logPath ? h('details', { style: { marginTop: 16 } }, h('summary', null, 'Лог обновления'), h('p', { style: { overflowWrap: 'anywhere', userSelect: 'text', fontSize: 12 } }, status.logPath)) : null),
       error || connectionError ? h(Alert, { className: 'vkp:mt-3' }, error || connectionError) : null);
   }

@@ -67,6 +67,14 @@ export class PluginUpdates {
   }
   private packageFile() { return join(this.profile!.dir, 'node_modules', packageName, 'package.json'); }
   private async installedVersion() { return this.profile ? (await json(this.packageFile())).version as string : runningVersion; }
+  private async localInstall(): Promise<boolean> {
+    if (!this.profile) return false;
+    try {
+      const manifest = await json(join(this.profile.dir, 'package.json'));
+      const spec = manifest.dependencies?.[packageName];
+      return typeof spec === 'string' && (spec.startsWith('file:') || spec.startsWith('link:') || spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('~') || spec.endsWith('.tgz'));
+    } catch { return false; }
+  }
   private async releaseCheck(force = false): Promise<ReleaseCheck> {
     if (!force && this.releaseCache && this.releaseCache.expires > Date.now()) return this.releaseCache.result;
     const result = this.computeRelease();
@@ -97,7 +105,7 @@ export class PluginUpdates {
       const release = await this.releaseCheck();
       if (release.canUpdate) return 'changed';
       const settings = await this.settings();
-      if (!this.profile || !settings.development || !isAbsolute(settings.directory)) return 'current';
+      if (!this.profile || (!settings.development && !await this.localInstall()) || !isAbsolute(settings.directory)) return 'current';
       const installed = await this.installedVersion(), key = settings.directory + '\0' + installed;
       if (this.noticeCache?.key === key && this.noticeCache.expires > Date.now()) return this.noticeCache.result;
       const result = (async (): Promise<UpdateNotice> => {
@@ -124,14 +132,15 @@ export class PluginUpdates {
   }
   async status(): Promise<UpdateStatus> {
     const state = await this.state(), settings = await this.settings(), installedVersion = await this.installedVersion();
-    const release = await this.releaseCheck();
+    const release = await this.releaseCheck(), localInstall = await this.localInstall();
     const available = Boolean(this.profile && this.manager());
     const restartRequired = installedVersion !== runningVersion || Boolean(state?.restartRequired && state.candidate?.version !== runningVersion);
     const stateMessage = state && !['idle', 'done'].includes(state.phase) ? state.message : '';
     const message = !available ? 'Обновление доступно в профиле DSH с включённым менеджером плагинов.'
+      : localInstall ? (stateMessage || 'Локальная установка. Соберите обновление из папки исходников.')
       : release.canUpdate ? release.message : stateMessage || release.message;
     return {
-      available, profile: this.profile?.name ?? '', profileDirectory: this.profile?.dir ?? '', runningVersion, installedVersion,
+      available, profile: this.profile?.name ?? '', profileDirectory: this.profile?.dir ?? '', runningVersion, installedVersion, localInstall,
       latestVersion: release.latestVersion, sourceVersion: state?.candidate?.sourceVersion ?? '', settings, phase: state?.phase ?? 'idle',
       message,
       canUpdate: !restartRequired && (release.canUpdate || (settings.development && state?.phase === 'ready')),
@@ -186,7 +195,7 @@ export class PluginUpdates {
       } catch (e) { await rm(this.lockFile, { force: true }); throw e; }
       return this.status();
     }
-    if (!settings.development) throw new Error(release.message || 'Обновлений нет.');
+    if (!settings.development && !await this.localInstall()) throw new Error(release.message || 'Обновлений нет.');
     await this.lock();
     try {
       const old = await this.state();
@@ -194,6 +203,20 @@ export class PluginUpdates {
       const job: Job = { pid: process.pid, id: randomUUID(), phase: action === 'check' ? 'checking' : 'building', message: action === 'check' ? 'Проверяем исходники и совместимость…' : action === 'update' ? 'Проверяем, собираем и устанавливаем обновление…' : 'Собираем обновление…', logPath: '', candidate: action === 'install' ? old?.candidate : undefined };
       await atomicJson(this.stateFile, job);
       void this.execute(action, settings, job).catch(() => {}).finally(() => rm(this.lockFile, { force: true }));
+    } catch (e) { await rm(this.lockFile, { force: true }); throw e; }
+    return this.status();
+  }
+  async startLocal(): Promise<UpdateStatus> {
+    if (!this.profile || !this.manager()) throw new Error('Менеджер плагинов DSH недоступен.');
+    if (!await this.localInstall()) throw new Error('Локальная сборка доступна только для установки из локального источника.');
+    const settings = await this.settings();
+    if (!isAbsolute(settings.directory)) throw new Error('Укажите абсолютный путь к checkout плагина.');
+    if (await this.installedVersion() !== runningVersion) throw new Error('Сначала перезапустите DSH, чтобы загрузить уже установленную версию.');
+    await this.lock();
+    try {
+      const job: Job = { pid: process.pid, id: randomUUID(), phase: 'building', message: 'Собираем локальную версию…', logPath: '' };
+      await atomicJson(this.stateFile, job);
+      void this.execute('update', settings, job).catch(() => {}).finally(() => rm(this.lockFile, { force: true }));
     } catch (e) { await rm(this.lockFile, { force: true }); throw e; }
     return this.status();
   }

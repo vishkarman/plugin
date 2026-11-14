@@ -6,7 +6,7 @@ export const updateNoticeSchema = z.enum(['changed', 'current', 'unknown']);
 export type UpdateNotice = z.infer<typeof updateNoticeSchema>;
 export const updateStatusSchema = z.object({
   available: z.boolean(), profile: z.string(), profileDirectory: z.string(),
-  runningVersion: z.string(), installedVersion: z.string(), latestVersion: z.string(), sourceVersion: z.string(),
+  runningVersion: z.string(), installedVersion: z.string(), localInstall: z.boolean(), latestVersion: z.string(), sourceVersion: z.string(),
   settings: updateSettingsSchema,
   phase: z.enum(['idle', 'checking', 'ready', 'building', 'installing', 'done', 'error']),
   message: z.string(), canUpdate: z.boolean(), restartRequired: z.boolean(), logPath: z.string(),
