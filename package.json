@@ -15,14 +15,15 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "vishvakarma-connect": "./dist/connect.js"
+    "vishvakarma-connect": "dist/connect.js"
   },
   "files": [
     "dist",
     "skills",
     "contracts",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc --noEmit && node scripts/build.mjs",
@@ -106,5 +107,25 @@
     "typescript": "^5.9.0",
     "yaml": "^2.8.0",
     "zod": "^4.6.7"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vishkarman/plugin.git",
+    "directory": "."
+  },
+  "homepage": "https://github.com/vishkarman/plugin#readme",
+  "bugs": {
+    "url": "https://github.com/vishkarman/plugin/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "design",
+    "vishvakarma"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
 }
