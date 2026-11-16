@@ -122,6 +122,42 @@ export function selectionDockView(ctx: Context) {
 
     useEffect(() => { void refreshMedia(); }, [refreshMedia]);
 
+    const [open, setOpen] = useState(false);
+    const anchorRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const [position, setPosition] = useState({ left: 8, bottom: 8, maxHeight: 480 });
+    useEffect(() => {
+      if (!open) return;
+      const update = () => {
+        const rect = anchorRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const width = Math.min(420, window.innerWidth - 16);
+        const bottom = Math.max(8, window.innerHeight - rect.top + 6);
+        setPosition({
+          left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+          bottom,
+          maxHeight: Math.max(180, window.innerHeight - bottom - 12),
+        });
+      };
+      const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); anchorRef.current?.focus(); } };
+      const onPointer = (event: PointerEvent) => {
+        const target = event.target as Node;
+        if (panelRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+        setOpen(false);
+      };
+      update();
+      window.addEventListener('resize', update);
+      window.addEventListener('scroll', update, true);
+      document.addEventListener('keydown', onKey);
+      document.addEventListener('pointerdown', onPointer);
+      return () => {
+        window.removeEventListener('resize', update);
+        window.removeEventListener('scroll', update, true);
+        document.removeEventListener('keydown', onKey);
+        document.removeEventListener('pointerdown', onPointer);
+      };
+    }, [open]);
+
     if (!snapshot?.supported || !snapshot.selection) return null;
     const selection = snapshot.selection;
     const account = snapshot.account;
@@ -207,72 +243,72 @@ export function selectionDockView(ctx: Context) {
       } finally { setGenerating(false); }
     }
 
-    return h('div', {
-      style: {
-        display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 4px', minWidth: 0,
-        fontSize: 12, color: 'var(--dsw-alias-label-secondary)', fontFamily: 'inherit',
-      },
-    },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 } },
-        h('span', {
-          'aria-hidden': true,
-          style: {
-            width: 18, height: 18, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 5,
-            border: '0.5px solid var(--dsw-alias-border-l2)', fontSize: 10, color: 'var(--dsw-alias-label-secondary)',
-          },
-        }, 'V'),
-        h('span', { style: labelStyle },
-          object ? `Выделен «${selection.targetLabel ?? selection.targetId}»` : `Проект «${snapshot.projectName ?? selection.projectId}»`,
-          h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } },
-            ` · ${snapshot.projectName ?? selection.projectId} · аккаунт ${account.displayName}`,
-            stale ? ' · последний выбор' : '',
-            readOnly ? ' · только чтение' : '')),
-        !readOnly ? h('button', {
-          type: 'button', disabled: busy || generating, onClick: () => { if (!formOpen) void refreshMedia(); setFormOpen(open => !open); },
-          title: 'Сгенерировать изображение по выделению',
-          style: { ...smallButton(busy || generating), marginLeft: 'auto', flex: 'none', background: 'transparent', color: 'var(--dsw-alias-label-primary)', border: '0.5px solid var(--dsw-alias-border-l2)' },
-        }, formOpen ? 'Скрыть' : 'Сгенерировать…') : null,
+    const details = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+      h('div', { style: { color: 'var(--dsw-alias-label-primary)', overflowWrap: 'anywhere' } },
+        object ? `Выделен «${selection.targetLabel ?? selection.targetId}»` : `Проект «${snapshot.projectName ?? selection.projectId}»`),
+      h('div', { style: { color: 'var(--dsw-alias-label-tertiary)' } },
+        `${snapshot.projectName ?? selection.projectId} · аккаунт ${account.displayName}`,
+        stale ? ' · последний выбор' : '', readOnly ? ' · только чтение' : ''));
+    const actions = h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+      !readOnly ? h('button', {
+        type: 'button', disabled: busy || generating,
+        onClick: () => { if (!formOpen) void refreshMedia(); setFormOpen(value => !value); },
+        style: { ...smallButton(busy || generating), background: 'transparent', color: 'var(--dsw-alias-label-primary)', border: '0.5px solid var(--dsw-alias-border-l2)' },
+      }, formOpen ? 'Скрыть' : 'Сгенерировать…') : null,
+      h('button', {
+        type: 'button', disabled: busy || generating, onClick: () => void insertContext(),
+        title: 'Вставит подготовленный контекст в черновик; сообщение отправляете вы',
+        style: { ...smallButton(busy || generating), background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)' },
+      }, busy ? 'Вставляем…' : 'Вставить в задачу'));
+    const form = formOpen && !readOnly ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: 8, borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)' } },
+      h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+        h('label', { style: { display: 'flex', gap: 4, alignItems: 'center' } }, 'Профиль',
+          h('select', {
+            value: profileId, disabled: generating, onChange: (event: any) => setProfileId(String(event.target.value)),
+            style: { ...fieldStyle, width: 'auto', maxWidth: 220 },
+          }, ...profileOptions.map(profile => h('option', { value: profile.id }, `${profile.title}${profile.costHintUsd ? ` · ~$${profile.costHintUsd}` : ''}`)))),
+        h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, effectiveMode === 'agent' ? 'запрос уйдёт агенту' : 'генерация напрямую из DSH')),
+      h('textarea', {
+        value: prompt, disabled: generating, rows: 3, placeholder: 'Что нарисовать или что изменить на выделенном изображении',
+        onInput: (event: any) => setPrompt(String(event.target.value)),
+        style: { ...fieldStyle, resize: 'vertical', minHeight: 60 },
+      }),
+      h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+        h('label', { style: { display: 'flex', gap: 4, alignItems: 'center' } }, 'Аспект',
+          h('select', {
+            value: aspect, disabled: generating, onChange: (event: any) => setAspect(String(event.target.value)),
+            style: { ...fieldStyle, width: 'auto' },
+          }, h('option', { value: '' }, 'как решит модель'), ...ASPECTS.map(value => h('option', { value }, value)))),
+        object ? h('label', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
+          h('input', { type: 'checkbox', checked: replace, disabled: generating, onChange: (event: any) => setReplace(!!event.target.checked) }),
+          'заменить выделенное изображение') : null,
         h('button', {
-          type: 'button', disabled: busy || generating, onClick: () => void insertContext(),
-          title: 'Вставит подготовленный контекст в черновик; сообщение отправляете вы',
-          style: { ...smallButton(busy || generating), ...(readOnly ? { marginLeft: 'auto' } : {}), flex: 'none', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)' },
-        }, busy ? 'Вставляем…' : 'Вставить в задачу')),
-      notice ? h('div', { role: 'status', style: { padding: '0 2px', fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', ...labelStyle } }, notice) : null,
-      formOpen && !readOnly ? h('div', {
+          type: 'button', disabled: !prompt.trim() || generating, onClick: () => void submitGeneration(),
+          style: { ...smallButton(!prompt.trim() || generating), marginLeft: 'auto', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)' },
+        }, generating ? 'Генерируем…' : (effectiveMode === 'agent' ? 'Вставить запрос' : 'Сгенерировать'))),
+      selectedProfile?.description ? h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, selectedProfile.description) : null) : null;
+    return h('div', { style: { display: 'inline-flex', padding: '2px 4px', minWidth: 0 } },
+      h('button', {
+        ref: anchorRef, type: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': open,
+        title: 'Vishvakarma: выделение и генерация',
+        onClick: () => { setOpen(value => !value); if (!open) void refresh(); },
         style: {
-          display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, padding: 6, borderRadius: 6,
-          border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)',
+          width: 18, height: 18, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 5,
+          border: '0.5px solid var(--dsw-alias-border-l2)', fontSize: 10, fontFamily: 'inherit',
+          color: 'var(--dsw-alias-label-secondary)', background: open ? 'var(--dsw-alias-bg-base)' : 'transparent',
+          cursor: 'pointer', padding: 0,
         },
-      },
-        h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
-          h('label', { style: { display: 'flex', gap: 4, alignItems: 'center' } }, 'Профиль',
-            h('select', {
-              value: profileId, disabled: generating, onChange: (event: any) => setProfileId(String(event.target.value)),
-              style: { ...fieldStyle, width: 'auto', maxWidth: 220 },
-            }, ...profileOptions.map(profile =>
-              h('option', { value: profile.id }, `${profile.title}${profile.costHintUsd ? ` · ~$${profile.costHintUsd}` : ''}`)))),
-          h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } },
-            effectiveMode === 'agent' ? 'запрос уйдёт агенту' : 'генерация напрямую из DSH')),
-        h('textarea', {
-          value: prompt, disabled: generating, rows: 2, placeholder: 'Что нарисовать или что изменить на выделенном изображении',
-          onInput: (event: any) => setPrompt(String(event.target.value)),
-          style: { ...fieldStyle, resize: 'vertical', minHeight: 44 },
-        }),
-        h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
-          h('label', { style: { display: 'flex', gap: 4, alignItems: 'center' } }, 'Аспект',
-            h('select', {
-              value: aspect, disabled: generating, onChange: (event: any) => setAspect(String(event.target.value)),
-              style: { ...fieldStyle, width: 'auto' },
-            }, h('option', { value: '' }, 'как решит модель'), ...ASPECTS.map(value => h('option', { value }, value)))),
-          object ? h('label', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
-            h('input', { type: 'checkbox', checked: replace, disabled: generating, onChange: (event: any) => setReplace(!!event.target.checked) }),
-            'заменить выделенное изображение') : null,
-          h('button', {
-            type: 'button', disabled: !prompt.trim() || generating,
-            onClick: () => void submitGeneration(),
-            style: { ...smallButton(!prompt.trim() || generating), marginLeft: 'auto', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)' },
-          }, generating ? 'Генерируем…' : (effectiveMode === 'agent' ? 'Вставить запрос' : 'Сгенерировать'))),
-        selectedProfile?.description ? h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, selectedProfile.description) : null,
-      ) : null);
+      }, 'V'),
+      open ? h('div', {
+        ref: panelRef, role: 'dialog', 'aria-label': 'Vishvakarma',
+        style: {
+          position: 'fixed', left: position.left, bottom: position.bottom, width: 'min(420px, calc(100vw - 16px))',
+          maxHeight: position.maxHeight, overflow: 'auto', zIndex: 1000, padding: 12, borderRadius: 10,
+          border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)',
+          color: 'var(--dsw-alias-label-secondary)', boxShadow: '0 8px 30px #0003', fontFamily: 'inherit', fontSize: 12,
+          display: 'flex', flexDirection: 'column', gap: 8,
+        },
+      }, details, actions, notice ? h('div', { role: 'status', style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', overflowWrap: 'anywhere' } }, notice) : null, form) : null);
+
   };
 }
